@@ -89,6 +89,7 @@ mpstr = '{0:02d}/{1:02d}'.format(rank+1, size)
 
 ngate = 512
 T = 67
+dd_shape = (256000000, 2)
 
 SR = 32. * u.MHz
 dt = (1/SR).to(u.s)
@@ -108,25 +109,18 @@ for fi, evn_file in enumerate(evn_files):
     print("[{0}: {1}] ({2}: {3}) Begin processing, Output at {4}".format(mpstr, TFmt(main_t0), flstr, evn_file, output_file))
 
     first = True
-    for i in xrange(T):
+    profiles = np.memmap('profiles_tmp', dtype='float32', mode='w+', shape=(dd_shape[0]*T, dd_shape[1]))
+    for i in xrange(3):
+#    for i in xrange(T):
         print('i: ',i)
         block_t0 = time.time()
         chnkstr = '{0:02d}/{1:02d}'.format(i+1, T)
         t0 = time.time()
         profile = BasebandProcess(ar_data, band, SR, dt, N, DN, offset, i, dd_coh, ngate)
         print('BasebandProcess time', (time.time() - t0))
-
-        if first:
-            print('first: ' )
-            profiles = profile
-            print('profiles.shape', profiles.shape)
-            first = not first
-        else:
-            profiles = np.append(profiles, profile, axis=0)
-            print('NOT first: profiles.shape', profiles.shape)
-
+        profiles[dd_shape[0]*i:dd_shape[0]*(i+1), :] = profile
         print("[{0}: {1}] ({2}: {3}) Block {4} processed in {5}.".format(mpstr, TFmt(main_t0), flstr, evn_file, chnkstr, TFmt(block_t0)))
-    zz = profiles.astype(np.float32)
-    np.save(output_file, zz)
+    np.save(output_file, profiles)
+    del profiles
     print("[{0}: {1}] ({2}: {3}) All blocks processed in {4}.".format(mpstr, TFmt(main_t0), flstr, evn_file, TFmt(file_t0)))
 print("[{0}: {1}] All done!".format(mpstr, TFmt(main_t0)))
