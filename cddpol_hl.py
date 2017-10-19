@@ -8,6 +8,8 @@ from pulsar.predictor import Polyco
 from pyfftw.interfaces.numpy_fft import rfft, irfft
 from mpi4py import MPI
 
+import math
+import matplotlib.pyplot as plt
 
 _fftargs = {'threads': int(os.environ.get('OMP_NUM_THREADS', 4)),
             'planner_effort': 'FFTW_ESTIMATE',
@@ -16,8 +18,9 @@ _fftargs = {'threads': int(os.environ.get('OMP_NUM_THREADS', 4)),
 comm = MPI.COMM_WORLD
 size = comm.Get_size()
 rank = comm.Get_rank()
-in_folder = '/mnt/raid-cita/hhlin/psr_1957/Data'
-out_folder = '/mnt/raid-cita/hhlin/psr_1957/Ar_B1957_IndividualPulses'
+in_folder = '/mnt/scratch-lustre/hhlin/Data'
+#out_folder = '/mnt/raid-cita/hhlin/psr_1957/Ar_B1957_IndividualPulses'
+out_folder = '/mnt/raid-project/gmrt/hhlin/time_streams_1957'
 main_t0 = time.time()
 
 def CL_Parser():
@@ -31,8 +34,11 @@ def TFmt(t):
 
 def MakeFileList(rank, size):
     import itertools
-    epochs = ['a', 'b', 'c', 'd']
-    nums = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
+    epochs = ['a']
+    nums = [7]
+#    nums = [3, 4, 6, 7, 9, 10]
+#    epochs = ['a', 'b', 'c', 'd']
+#    nums = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
     evn_gen = itertools.product(epochs, nums)
     evn = ['gp052{0}_ar_no00{1:02d}'.format(epoch, file_num) for epoch, file_num in evn_gen]
     return evn[rank::size]
@@ -55,7 +61,7 @@ def FindOffset(ar_data, SR):
     t0 = fh.time0
     offset_time = Time(math.ceil(t0.unix), format='unix', precision=9)
     offset = fh.seek(offset_time)
-    t00 = offset_time.mjd # previous: isot
+    t00 = np.float128(offset_time.mjd) # previous: isot
     return offset, t00
 
 def FindPhase(t0, z_size, dt, ngate):
@@ -72,15 +78,14 @@ def BasebandProcess(ar_data, band, SR, dt, N, DN, offset, i, dd_coh, ngate):
     fh.seek(offset + i*(N - DN))
     t0 = fh.tell(unit='time')
     ph, ncycle = FindPhase(t0, N - DN, dt, ngate)
+    ph %= ngate
     z = fh.read(N)
-    print( 'z.shape(before dd)', z.shape)
     z = rfft(z, axis=0, **_fftargs)
     z *= dd_coh[..., np.newaxis]
     z = irfft(z, axis=0, **_fftargs)[:-DN]
     z = z.astype(np.float32)
     z = z*z
-    print( 'z.shape (after dd)', z.shape)
-    return z
+    return ph, z
 
 args = CL_Parser()
 band = args.band
@@ -89,7 +94,7 @@ mpstr = '{0:02d}/{1:02d}'.format(rank+1, size)
 
 ngate = 512
 T = 67
-dd_shape = (256000000, 2)
+fold_time_length = 0.5 #unit: sec
 
 SR = 32. * u.MHz
 dt = (1/SR).to(u.s)
@@ -108,19 +113,32 @@ for fi, evn_file in enumerate(evn_files):
     output_file = '{0}/{1}_{2}g_{3}b_{4}+{5}s.npy'.format(out_folder, evn_file, ngate, band, t00, T*block_length)
     print("[{0}: {1}] ({2}: {3}) Begin processing, Output at {4}".format(mpstr, TFmt(main_t0), flstr, evn_file, output_file))
 
-    first = True
-    profiles = np.memmap('profiles_tmp', dtype='float32', mode='w+', shape=(dd_shape[0]*T, dd_shape[1]))
-    for i in xrange(3):
-#    for i in xrange(T):
+    zz = np.zeros(( int(T * 8 / fold_time_length), ngate * 2))
+
+    for i in xrange(T):
         print('i: ',i)
         block_t0 = time.time()
         chnkstr = '{0:02d}/{1:02d}'.format(i+1, T)
-        t0 = time.time()
-        profile = BasebandProcess(ar_data, band, SR, dt, N, DN, offset, i, dd_coh, ngate)
-        print('BasebandProcess time', (time.time() - t0))
-        profiles[dd_shape[0]*i:dd_shape[0]*(i+1), :] = profile
+        ph, z = BasebandProcess(ar_data, band, SR, dt, N, DN, offset, i, dd_coh, ngate)
+
+        for jj in xrange(int(8./fold_time_length)):
+            init = int(fold_time_length * len(z) / 8.) * jj
+            final = int(fold_time_length * len(z) / 8.) * (jj+1)
+            phase_bins = ph[init:final]
+            bin_counts = np.bincount(phase_bins)
+            data_0 = z[init:final,0]
+            data_1 = z[init:final,1]
+
+            # Nikhil's folding:
+            fold_data_0 = np.bincount(phase_bins, data_0)
+            fold_data_1 = np.bincount(phase_bins, data_1)
+            fold_data_0 /= bin_counts
+            fold_data_1 /= bin_counts
+            fold_data = np.concatenate((fold_data_0, fold_data_1), axis=0)           
+
+            zz[i * int(8./fold_time_length) + jj] = fold_data
+        prin t('time for a block', time.time()-block_t0) 
         print("[{0}: {1}] ({2}: {3}) Block {4} processed in {5}.".format(mpstr, TFmt(main_t0), flstr, evn_file, chnkstr, TFmt(block_t0)))
-    np.save(output_file, profiles)
-    del profiles
+    np.save(output_file, zz)
     print("[{0}: {1}] ({2}: {3}) All blocks processed in {4}.".format(mpstr, TFmt(main_t0), flstr, evn_file, TFmt(file_t0)))
 print("[{0}: {1}] All done!".format(mpstr, TFmt(main_t0)))
