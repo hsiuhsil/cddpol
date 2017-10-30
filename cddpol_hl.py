@@ -1,5 +1,6 @@
 from __future__ import print_function, division
 import time, sys, os, argparse
+import os.path
 import numpy as np
 import astropy.units as u
 import math
@@ -8,6 +9,7 @@ from pulsar.predictor import Polyco
 from pyfftw.interfaces.numpy_fft import rfft, irfft
 from mpi4py import MPI
 
+import h5py
 import math
 import matplotlib.pyplot as plt
 
@@ -69,8 +71,10 @@ def FindPhase(t0, z_size, dt, ngate):
     p = polyco.phasepol(t0, rphase='fraction', t0=t0, time_unit=u.second, convert=True)
     ph = p(np.arange(z_size) * dt.to(u.s).value)
     ph -= np.floor(ph[0])
+    print('ph1', ph)
     ncycle = int(np.floor(ph[-1])) + 1
-    ph = np.remainder(ph*ngate, ngate*ncycle).astype(np.int32)
+    ph = np.remainder(ph*ngate, ngate*ncycle).astype(np.float64)
+    print('ph2', ph)
     return ph, ncycle
 
 def BasebandProcess(ar_data, band, SR, dt, N, DN, offset, i, dd_coh, ngate):
@@ -79,6 +83,7 @@ def BasebandProcess(ar_data, band, SR, dt, N, DN, offset, i, dd_coh, ngate):
     t0 = fh.tell(unit='time')
     ph, ncycle = FindPhase(t0, N - DN, dt, ngate)
     ph %= ngate
+    print('ph3', ph)
     z = fh.read(N)
     z = rfft(z, axis=0, **_fftargs)
     z *= dd_coh[..., np.newaxis]
@@ -110,10 +115,32 @@ for fi, evn_file in enumerate(evn_files):
     flstr = "{0:02d}/{1:02d}".format(fi+1, len(evn_files))
     ar_data = "{0}/{1}".format(in_folder, evn_file)
     offset, t00 = FindOffset(ar_data, SR)
-    output_file = '{0}/{1}_{2}g_{3}b_{4}+{5}s.npy'.format(out_folder, evn_file, ngate, band, t00, T*block_length)
-    print("[{0}: {1}] ({2}: {3}) Begin processing, Output at {4}".format(mpstr, TFmt(main_t0), flstr, evn_file, output_file))
+    output_file = '{0}/{1}_{2}g_{3}b_{4}+{5}s_'.format(out_folder, evn_file, ngate, band, t00, T*block_length)
+    print('output_file is', output_file)
+#    zz = np.zeros(( int(T * 8 / fold_time_length), ngate * 2))
+    zz = np.zeros(ngate * 2)
 
-    zz = np.zeros(( int(T * 8 / fold_time_length), ngate * 2))
+    '''create a dataset for each folding file'''
+    files = {}
+    keys = ['t00', 'ph', 'fold_data']
+    if os.path.isfile(output_file) == True:
+        files[output_file] = h5py.File(output_file + 'h5',"r+")
+    else:
+        this_file = h5py.File(output_file + 'h5',"w")
+        for dataset_name in keys:
+            if dataset_name == 't00':
+                first_data = np.zeros(1, dtype=np.float64)
+                this_file.create_dataset(dataset_name, (0,) + first_data.shape, maxshape = (None,) +first_data.shape, dtype=first_data.dtype, chunks=True)
+            elif dataset_name == 'ph':
+                first_data = np.zeros(int(8/dt.value))
+                this_file.create_dataset(dataset_name, (0,) + first_data.shape, maxshape = (None,) +first_data.shape, dtype=first_data.dtype, chunks=True)
+            elif dataset_name == 'fold_data':
+                first_data = zz
+                this_file.create_dataset(dataset_name, (0,) + first_data.shape, maxshape = (None,) +first_data.shape, dtype=first_data.dtype, chunks=True)
+            files[output_file] = this_file
+
+
+    print("[{0}: {1}] ({2}: {3}) Begin processing, Output at {4}".format(mpstr, TFmt(main_t0), flstr, evn_file, output_file))
 
     for i in xrange(T):
         print('i: ',i)
@@ -121,24 +148,50 @@ for fi, evn_file in enumerate(evn_files):
         chnkstr = '{0:02d}/{1:02d}'.format(i+1, T)
         ph, z = BasebandProcess(ar_data, band, SR, dt, N, DN, offset, i, dd_coh, ngate)
 
+        for dataset_name in keys[:-1]:
+            current_len = files[output_file][dataset_name].shape[0]
+            files[output_file][dataset_name].resize(current_len + 1, 0)
+            if dataset_name == 't00':
+                # the unit of the t00_offset is  MJD
+                t00_offset = np.float64(t00 + i*8./86400)
+                files[output_file]['t00'][current_len,...] = t00_offset
+            elif dataset_name == 'ph':
+                files[output_file]['ph'][current_len,...] = ph
+            elif dataset_name == 'fold_data':
+                pass
+
+        print('time to store t00 and ph', time.time() - block_t0)
+
         for jj in xrange(int(8./fold_time_length)):
             init = int(fold_time_length * len(z) / 8.) * jj
             final = int(fold_time_length * len(z) / 8.) * (jj+1)
-            phase_bins = ph[init:final]
+            phase_bins = np.around(ph[init:final]).astype(np.int)
+            phase_bins %= ngate
+#            phase_bins = ph[init:final].astype(np.int)
+            print('max of phase_bins', np.amax(phase_bins))
+            print('min of phase_bins', np.amin(phase_bins))
+            print('phase_bins', phase_bins)
             bin_counts = np.bincount(phase_bins)
             data_0 = z[init:final,0]
             data_1 = z[init:final,1]
-
             # Nikhil's folding:
             fold_data_0 = np.bincount(phase_bins, data_0)
             fold_data_1 = np.bincount(phase_bins, data_1)
             fold_data_0 /= bin_counts
             fold_data_1 /= bin_counts
             fold_data = np.concatenate((fold_data_0, fold_data_1), axis=0)           
+            print('fold_data.shape', fold_data.shape)
+            # store the fold_data into the h5py file.
+            for dataset_name in keys:
+                if dataset_name == 'fold_data':
+                    current_len = files[output_file][dataset_name].shape[0]
+#                    print('current_len', current_len)
+                    files[output_file][dataset_name].resize(current_len + 1, 0)
+                    files[output_file]['fold_data'][current_len,...] = fold_data
+                else:
+                    pass        
+            print('time for a block', time.time()-block_t0) 
 
-            zz[i * int(8./fold_time_length) + jj] = fold_data
-        prin t('time for a block', time.time()-block_t0) 
         print("[{0}: {1}] ({2}: {3}) Block {4} processed in {5}.".format(mpstr, TFmt(main_t0), flstr, evn_file, chnkstr, TFmt(block_t0)))
-    np.save(output_file, zz)
     print("[{0}: {1}] ({2}: {3}) All blocks processed in {4}.".format(mpstr, TFmt(main_t0), flstr, evn_file, TFmt(file_t0)))
 print("[{0}: {1}] All done!".format(mpstr, TFmt(main_t0)))
