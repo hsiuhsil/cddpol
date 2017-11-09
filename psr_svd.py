@@ -1,5 +1,4 @@
-import sys
-import os
+import sys, os, argparse
 import os.path
 
 import numpy as np
@@ -10,24 +9,47 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 import math
 from scipy import fftpack, optimize, interpolate, linalg, integrate
+from mpi4py import MPI
+
 import copy
+import glob
+import paras
 
-NHARMONIC = 640 
-NMODES = 3
+comm = MPI.COMM_WORLD
+size = comm.Get_size()
+rank = comm.Get_rank()
 
-NPHASEBIN = 512
-NCENTRALBINS = 512
-NCENTRALBINSMAIN = 512
+NHARMONIC = paras.NHARMONIC 
+NMODES = paras.NMODES
 
-chi2_samples_const = 1400
+NPHASEBIN = paras.NPHASEBIN
+NCENTRALBINS = paras.NCENTRALBINS
+NCENTRALBINSMAIN = paras.NCENTRALBINSMAIN
+chi2_samples_const = paras.chi2_samples_const
+
+tint = paras.tint
+prof_stack = paras.prof_stack
+time_str_folder = '/mnt/raid-project/gmrt/hhlin/time_streams_1957/test_gp052d/'
+time_str_patterns = time_str_folder + '*h5'
+phase_amp_files = time_str_folder + '*nodes*npy'
 
 def main():    
 
-    if True:
-        this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
+    args = CL_Parser()
+    band = args.band
 
-        fold_data = this_file['fold_data']
 
+    if True: #combine all folding data in one single array.
+
+        single_fold_shape = (int(8*paras.T/paras.tint), NPHASEBIN*2)
+        fold_data = np.zeros((len(glob.glob(time_str_patterns))*single_fold_shape[0], single_fold_shape[1]))
+
+        count = 0
+        for f in glob.glob(time_str_patterns):
+           ff = h5py.File(f, 'r')
+           fold_data[count*single_fold_shape[0]:(count+1)*single_fold_shape[0], :] = ff['fold_data_int_'+str(paras.tint)+'_band_'+str(band)]            
+           count += 1
+        print 'finished combining folding data'
 
     if False: #reform the format of raw data
         '''raw_data is in the shape of (pulse rotation, phase, pol)'''
@@ -58,7 +80,7 @@ def main():
 #        svd(B_data_rebin, rebin_pulse)
         plot_svd(B_data_rebin, rebin_pulse, filename)
 
-    if True: 
+    if False: 
         '''Reconstruct V modes'''
 #        profile = B_data_stack
         profile = fold_data
@@ -90,61 +112,107 @@ def main():
         plot_svd(profile_norm_var, 'profile_norm_var')
         print 'finish SVD'
         check_noise(profile_norm_var)      
-
-        '''reshape profiles of L and R into periodic signals (pulse number, L/R, phases)'''
-        profile_npy = np.zeros(profile.shape)
-        profile_npy[:] = profile[:]
-        profile_npy = profile_npy.reshape(profile_npy.shape[0], 2, profile_npy.shape[1]/2)        
         V_recon = V.reshape(V.shape[0], 2, V.shape[1]/2)
 
-#        phase_fitting(profile_npy, V_recon)
+
+        for ii in xrange(len(glob.glob(time_str_patterns))):
+            if ii % size == rank:
+                ff = glob.glob(time_str_patterns)[ii]
+                patterns = str(ff[-46:-29])
+                print 'patterns', patterns
+                this_file = h5py.File(ff,'r')
+                print 'this_file', this_file, rank
+                profile = this_file['fold_data_int_'+str(paras.tint)+'_band_'+str(band)]
+
+                '''stack profiles'''
+                if True:
+                    profile = stack(profile, paras.prof_stack)
+                    tint_stack = paras.tint*paras.prof_stack
+                else:
+                    tint_stack = paras.tint
+
+                '''reshape profiles of L and R into periodic signals (pulse number, L/R, phases)'''
+                profile_npy = np.zeros(profile.shape)
+                profile_npy[:] = profile[:]
+                profile_npy = profile_npy.reshape(profile_npy.shape[0], 2, profile_npy.shape[1]/2)   
+                print 'profile_npy.shape', profile_npy.shape
+                phase_fitting(profile_npy, V_recon, patterns, tint_stack)
+
 
     if False:
-        npy_lik_file_v0only = np.load('phase_amp_bin_lik_v0only.npy')
-        npy_lik_file_v0_v1 = np.load('phase_amp_bin_lik_v0_v1.npy')
-        npy_lik_file_v0_v1_v2 = np.load('phase_amp_bin_lik_v0_v1_v2.npy')
-        plot_phase_lik(npy_lik_file_v0only, 'phase_lik_v0only.png')
-        plot_phase_lik(npy_lik_file_v0_v1, 'phase_lik_v0_v1.png')
-        plot_phase_lik(npy_lik_file_v0_v1_v2, 'phase_lik_v0_v1_v2.png')
-        plot_fit_amps(npy_lik_file_v0_v1, 'amp_v0_v1.png')
-        plot_fit_amps(npy_lik_file_v0_v1_v2, 'amp_v0_v1_v2.png')
+       # single_phase_amp = (int(8*paras.T/paras.tint/paras.prof_stack), (1+NMODES)*2)
+        single_phase_amp = (10, (1+NMODES)*2)
+        phases_amps = np.zeros((len(glob.glob(phase_amp_files))*single_phase_amp[0], single_phase_amp[1])
+        times = np.zeros(len(glob.glob(time_str_patterns))*single_phase_amp[0])
+        count = 0
+        for ii in xrange(len(glob.glob(phase_amp_files))):
+            ff = sorted(glob.glob(phase_amp_files))[ii]
+            phases_amps[count*single_phase_amp[0]:(count+1)*single_phase_amp[0], :] = ff[0:10, :]       
+            hh = sorted(glob.glob(time_str_patterns))[ii]
+            this_file = h5py.File(hh, 'r')
+            t00 = this_file['t00'][0]
+            t00_series = np.arange(t00, t00+8.*paras.T/86400, paras.tint*paras.prof_stack)
+            times[count*single_phase_amp[0]:(count+1)*single_phase_amp[0]] = t00_series
+            count += 1
+        print 'finished combining phases_amps and times data'
 
-def plot_fit_amps(npy_lik_file, plot_name):
-    npy_lik_file = npy_lik_file[0:100]
-    profile_numbers = np.arange(0.25, len(npy_lik_file)*0.5, 0.5)
-    xmin = np.amin(profile_numbers)
-    xmax = np.amax(profile_numbers)
+        
+        npy_lik_file_v0_v1 = np.load('phase_amp_bin_lik_0.03125sec.npy')
+        plot_phase_lik(times, phases_amps, 'phase_lik.png')
+        plot_fit_amps(times, phases_amps, 'amp_ratios.png')
+
+def CL_Parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-b", "--band", type=int, choices=[0, 1, 2], help="Select which frequency band to process. Integer from 0 to 2.")
+    return parser.parse_args()
+
+def MakeFileList(rank, size):
+    import itertools
+    epochs = ['d']
+    nums = [3, 4, 6, 7]
+#    nums = [7, 9, 10, 12, 13, 15, 16, 18, 19, 21]
+#    nums = [3, 4, 6, 7, 9, 10]
+#    epochs = ['a', 'b', 'c', 'd']
+#    nums = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
+    evn_gen = itertools.product(epochs, nums)
+    evn = ['test_gp052{0}_ar_no00{1:02d}'.format(epoch, file_num) for epoch, file_num in evn_gen]
+    print 'evn[rank::size]', evn[rank::size], rank, size
+    return evn[rank::size]
+
+
+def plot_fit_amps(times, phases_amps, plot_name):
+    npy_lik_file = phases_amps
+#    profile_numbers = np.arange(0, len(npy_lik_file)*tint*prof_stack, tint*prof_stack)
+    xmin = np.amin(times)
+    xmax = np.amax(times)
     zeros_line = np.zeros(len(npy_lik_file[:]))
 
     markersize = 4.0
     fontsize = 16
 
     plt.close('all')
-    plt.plot(profile_numbers, zeros_line, 'r--')
+    plt.plot(times, zeros_line, 'r--')
     color = ['bo','rs']
     label = ['Amp1/Amp0', 'Amp2/Amp0']
     for ii in xrange((npy_lik_file.shape[1]-2)/2 -1):
-        plt.plot(profile_numbers, (npy_lik_file[:,ii+2]/ npy_lik_file[:,1]), color[ii], label=label[ii], markersize=markersize)
+        plt.plot(times, (npy_lik_file[:,ii+2]/ npy_lik_file[:,1]), color[ii], label=label[ii], markersize=markersize)
     plt.xlim([xmin, xmax])
     plt.xlabel('time (sec)', fontsize=fontsize)
     plt.ylabel('Fitting Amps ratio', fontsize=fontsize)
     plt.legend(loc='upper right', fontsize=fontsize-4)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
-    plt.savefig(plot_name, bbox_inches='tight')
+    plt.savefig(plot_name, bbox_inches='tight', dpi=300)
 
         
 
 
-def plot_phase_lik(npy_lik_file, plot_name):
+def plot_phase_lik(times, phases_amps, plot_name):
 
-#    profile_numbers = np.linspace(0, len(npy_lik_file), num=len(npy_lik_file), endpoint=False)
-    npy_lik_file = npy_lik_file[0:100]
-    profile_numbers = np.arange(0.25, len(npy_lik_file)*0.5, 0.5)
-    xmin = np.amin(profile_numbers)
-    xmax = np.amax(profile_numbers)
+    npy_lik_file = phases_amps
+#    profile_numbers = np.arange(0, len(npy_lik_file)*tint*prof_stack, tint*prof_stack)
+    xmin = np.amin(times)
+    xmax = np.amax(times)
     zeros_line = np.zeros(len(npy_lik_file[:]))
-#    phase_bins = npy_lik_file[:,0] * (1/622.12202878404123374)/512 * 1000000
-#    phase_bin_errs = npy_lik_file[:,npy_lik_file.shape[1]/2] * (1/622.12202878404123374)/512 * 1000000
     phase_bins = npy_lik_file[:,0]
     phase_bin_errs = npy_lik_file[:,npy_lik_file.shape[1]/2]
 
@@ -152,14 +220,14 @@ def plot_phase_lik(npy_lik_file, plot_name):
     fontsize = 16
 
     plt.close('all')
-    plt.plot(profile_numbers, zeros_line, 'r--')
-    plt.plot(profile_numbers, phase_bins, 'bo', markersize=markersize)
-    plt.errorbar(profile_numbers, phase_bins, yerr= phase_bin_errs, fmt='none', ecolor='b')
+    plt.plot(times, zeros_line, 'r--')
+    plt.plot(times, phase_bins, 'bo', markersize=markersize)
+    plt.errorbar(times, phase_bins, yerr= phase_bin_errs, fmt='none', ecolor='b')
     plt.xlim([xmin, xmax])
     plt.xlabel('time (sec)', fontsize=fontsize)
     plt.ylabel('Fitting phase errs', fontsize=fontsize)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
-    plt.savefig(plot_name, bbox_inches='tight')
+    plt.savefig(plot_name, bbox_inches='tight', dpi=300)
 
 
 
@@ -193,7 +261,7 @@ def plot_V(V, plot_name_V):
     plt.ylabel('V values', fontsize=fontsize)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
 #    plot_name_V = 'recon_V.png'
-    plt.savefig(plot_name_V, bbox_inches='tight')
+    plt.savefig(plot_name_V, bbox_inches='tight', dpi=300)
 
 def reconstruct_profile(U,s,V):
     '''reconstruct a profile using U, s, and V.'''
@@ -238,10 +306,10 @@ def check_noise(profile):
     plt.ylabel('Variance', fontsize=fontsize)
     plt.legend(loc='upper right', fontsize=fontsize)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
-    plt.savefig('variance_rl.png', bbox_inches='tight')
+    plt.savefig('variance_rl.png', bbox_inches='tight', dpi=300)
 
 
-def phase_fitting(profiles, V):
+def phase_fitting(profiles, V, patterns, tint_stack):
     profile_numbers = []
     profile_numbers_lik = []
     phase_model = []
@@ -250,8 +318,8 @@ def phase_fitting(profiles, V):
     phases_lik = []
     phase_errors_lik = []
 
-    nprof = 100
-#    nprof = len(profiles)
+#    nprof = 10
+    nprof = len(profiles)
     profiles = profiles[:nprof]
 
     V_fft = fftpack.fft(V, axis=2)
@@ -306,9 +374,9 @@ def phase_fitting(profiles, V):
         model_fft_R = model(pars_fit, V_fft_R)
         print 'model_fft_L.shape', model_fft_L.shape
         print 'profile_fft_L.shape', profile_fft_L.shape
-        plot_phase_fft(pick_harmonics(profile_fft_L), model_fft_L, ii, 'phase_fit_L_')
-        plot_phase_ifft(pars_fit, profile_L, profile_R, V_fft_L, V_fft_R, ii, 'phase_fit_')
-        plot_phase_fft(pick_harmonics(profile_fft_R), model_fft_R, ii, 'phase_fit_R_')
+        plot_phase_fft(pick_harmonics(profile_fft_L), model_fft_L, ii, patterns+'fit_L_')
+        plot_phase_ifft(pars_fit, profile_L, profile_R, V_fft_L, V_fft_R, ii, patterns+'fit_')
+        plot_phase_fft(pick_harmonics(profile_fft_R), model_fft_R, ii, patterns+'fit_R_')
 #        plot_phase_ifft(pars_fit, profile_R, V_fft_R, ii, 'phase_fit_R_')
 
         if True:
@@ -381,13 +449,13 @@ def phase_fitting(profiles, V):
             phases_lik.append(pars_init[0] + mean)
             phase_errors_lik.append(std)
             profile_numbers_lik.append(ii)
-            plot_phase_diff_chi2(phase_diff_samples, likelihood, norm, ii)
+            plot_phase_diff_chi2(phase_diff_samples, likelihood, norm, ii, patterns)
 
             '''save the fitting amp and bin as [bin, amps, bin_err, amp_errs]'''
-            npy_lik_file = 'phase_amp_bin_lik.npy'
+            npy_lik_file = patterns+'fit_nodes_'+str(NMODES)+'_tint_'+str(tint_stack)+'_.npy'
             phase_amp_bin_lik = np.concatenate(([pars_init[0] + mean], pars_fit[1:], [std], errs[1:]))
 
-            if False:
+            if True:
                 if os.path.exists(npy_lik_file):
                     sequence = np.load(npy_lik_file)
                     np.save(npy_lik_file, np.vstack((sequence, phase_amp_bin_lik)))
@@ -534,7 +602,7 @@ def plot_svd(file, plot_name):
     plt.ylim((0, np.max(s)))
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
     plot_name_s = plot_name + '_s.png'
-    plt.savefig(plot_name_s, bbox_inches=None)
+    plt.savefig(plot_name_s, bbox_inches=None, dpi=300)
 #    plt.show()
 
 #    print 'np.max(V[0])',np.max(V[0])
@@ -553,7 +621,7 @@ def plot_svd(file, plot_name):
     plt.ylabel('V values', fontsize=fontsize)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
     plot_name_V = plot_name + '_V.png'
-    plt.savefig(plot_name_V, bbox_inches='tight')
+    plt.savefig(plot_name_V, bbox_inches='tight', dpi=300)
 
     plt.close('all')
     plt.figure()
@@ -568,7 +636,7 @@ def plot_svd(file, plot_name):
     plt.ylabel('U values', fontsize=fontsize)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
     plot_name_U = plot_name + '_U.png'
-    plt.savefig(plot_name_U, bbox_inches='tight')
+    plt.savefig(plot_name_U, bbox_inches='tight', dpi=300)
 
 
 def plot_rebin_ut(xmin, xmax):
@@ -594,7 +662,7 @@ def plot_rebin_ut(xmin, xmax):
     plt.ylabel('U values', fontsize=fontsize)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
     plot_name_U = plot_name + '_' + str(xmin) + '_' + str(xmax) + '_rebin_ut.png'
-    plt.savefig(plot_name_U, bbox_inches='tight')
+    plt.savefig(plot_name_U, bbox_inches='tight', dpi=300)
     
 def plot_phase_fft(data_fft, model_fft, ii, plot_name):
 
@@ -649,7 +717,7 @@ def plot_phase_fft(data_fft, model_fft, ii, plot_name):
     ax4.set_xlim([xmin,xmax])
     ax4.tick_params(axis='both', which='major', labelsize=fontsize)
       
-    plt.savefig(plot_name + 'fft.png', bbox_inches='tight')
+    plt.savefig(plot_name + 'fft.png', bbox_inches='tight', dpi=300)
 
 def plot_phase_ifft(pars_fit, data_L, data_R, V_fft_L, V_fft_R, ii, plot_name):
 
@@ -704,10 +772,10 @@ def plot_phase_ifft(pars_fit, data_L, data_R, V_fft_L, V_fft_R, ii, plot_name):
     ax2.set_ylabel('Residuals (T/Tsys)', fontsize=fontsize)
     ax2.tick_params(axis='both', which='major', labelsize=fontsize)
 
-    plt.savefig(plot_name + 'ifft.png', bbox_inches='tight')    
+    plt.savefig(plot_name + 'ifft.png', bbox_inches='tight', dpi=300)    
 
-def plot_phase_diff_chi2(phase_diff_samples, likelihood, norm, ii):
-    plot_name = 'phase_fit_'
+def plot_phase_diff_chi2(phase_diff_samples, likelihood, norm, ii, patterns):
+    plot_name = patterns + 'fit_'
     fontsize = 16
     plot_name += str(ii) + '_'
     plt.close('all')
@@ -718,7 +786,7 @@ def plot_phase_diff_chi2(phase_diff_samples, likelihood, norm, ii):
     plt.xlim((phase_diff_range[np.where((likelihood / norm / (0.02/NPHASEBIN))>np.amax(likelihood / norm / (0.02/NPHASEBIN)) * 10**-4)[0][0]],phase_diff_range[np.where((likelihood / norm / (0.02/NPHASEBIN) )>np.amax(likelihood / norm / (0.02/NPHASEBIN)) * 10**-4)[0][-1]]))
     plt.ylim((np.amax(likelihood / norm / (0.02/NPHASEBIN)) * 10**-4, np.amax(likelihood / norm / (0.02/NPHASEBIN)) * 4.5))
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
-    plt.savefig(plot_name+'phase_chi2.png', bbox_inches='tight')
+    plt.savefig(plot_name+'phase_chi2.png', bbox_inches='tight', dpi=300)
 
 
 if __name__ == '__main__':

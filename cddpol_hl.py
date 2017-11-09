@@ -10,8 +10,8 @@ from pyfftw.interfaces.numpy_fft import rfft, irfft
 from mpi4py import MPI
 
 import h5py
-import math
 import matplotlib.pyplot as plt
+import paras
 
 _fftargs = {'threads': int(os.environ.get('OMP_NUM_THREADS', 4)),
             'planner_effort': 'FFTW_ESTIMATE',
@@ -36,8 +36,10 @@ def TFmt(t):
 
 def MakeFileList(rank, size):
     import itertools
-    epochs = ['a']
-    nums = [7]
+    epochs = ['d']
+#    nums = [3, 4, 6, 7, 9, 10, 12, 13]
+    nums = [15, 16, 18, 19, 21, 22]
+#    nums = [7, 9, 10, 12, 13, 15, 16, 18, 19, 21]
 #    nums = [3, 4, 6, 7, 9, 10]
 #    epochs = ['a', 'b', 'c', 'd']
 #    nums = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
@@ -97,9 +99,9 @@ band = args.band
 evn_files = MakeFileList(rank, size)
 mpstr = '{0:02d}/{1:02d}'.format(rank+1, size)
 
-ngate = 512
-T = 67
-fold_time_length = 0.5 #unit: sec
+ngate = paras.ngate
+T = paras.T
+fold_time_length = paras.tint #unit: sec
 
 SR = 32. * u.MHz
 dt = (1/SR).to(u.s)
@@ -122,7 +124,7 @@ for fi, evn_file in enumerate(evn_files):
 
     '''create a dataset for each folding file'''
     files = {}
-    keys = ['t00', 'ph', 'fold_data']
+    keys = ['t00', 'fold_data_int_'+str(fold_time_length)+'_band_'+str(band)]
     if os.path.isfile(output_file) == True:
         files[output_file] = h5py.File(output_file + 'h5',"r+")
     else:
@@ -131,10 +133,10 @@ for fi, evn_file in enumerate(evn_files):
             if dataset_name == 't00':
                 first_data = np.zeros(1, dtype=np.float64)
                 this_file.create_dataset(dataset_name, (0,) + first_data.shape, maxshape = (None,) +first_data.shape, dtype=first_data.dtype, chunks=True)
-            elif dataset_name == 'ph':
-                first_data = np.zeros(int(8/dt.value))
-                this_file.create_dataset(dataset_name, (0,) + first_data.shape, maxshape = (None,) +first_data.shape, dtype=first_data.dtype, chunks=True)
-            elif dataset_name == 'fold_data':
+#            elif dataset_name == 'ph':
+#                first_data = np.zeros(int(8/dt.value))
+#                this_file.create_dataset(dataset_name, (0,) + first_data.shape, maxshape = (None,) +first_data.shape, dtype=first_data.dtype, chunks=True)
+            elif dataset_name == 'fold_data_int_'+str(fold_time_length)+'_band_'+str(band):
                 first_data = zz
                 this_file.create_dataset(dataset_name, (0,) + first_data.shape, maxshape = (None,) +first_data.shape, dtype=first_data.dtype, chunks=True)
             files[output_file] = this_file
@@ -155,10 +157,10 @@ for fi, evn_file in enumerate(evn_files):
                 # the unit of the t00_offset is  MJD
                 t00_offset = np.float64(t00 + i*8./86400)
                 files[output_file]['t00'][current_len,...] = t00_offset
-            elif dataset_name == 'ph':
-                files[output_file]['ph'][current_len,...] = ph
+#            elif dataset_name == 'ph':
+#                files[output_file]['ph'][current_len,...] = ph
             elif dataset_name == 'fold_data':
-                pass
+                    pass
 
         print('time to store t00 and ph', time.time() - block_t0)
 
@@ -183,11 +185,11 @@ for fi, evn_file in enumerate(evn_files):
             print('fold_data.shape', fold_data.shape)
             # store the fold_data into the h5py file.
             for dataset_name in keys:
-                if dataset_name == 'fold_data':
+                if dataset_name == 'fold_data_int_'+str(fold_time_length)+'_band_'+str(band):
                     current_len = files[output_file][dataset_name].shape[0]
 #                    print('current_len', current_len)
                     files[output_file][dataset_name].resize(current_len + 1, 0)
-                    files[output_file]['fold_data'][current_len,...] = fold_data
+                    files[output_file]['fold_data_int_'+str(fold_time_length)+'_band_'+str(band)][current_len,...] = fold_data
                 else:
                     pass        
             print('time for a block', time.time()-block_t0) 
