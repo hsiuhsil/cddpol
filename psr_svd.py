@@ -29,9 +29,9 @@ chi2_samples_const = paras.chi2_samples_const
 
 tint = paras.tint
 prof_stack = paras.prof_stack
-time_str_folder = '/mnt/raid-project/gmrt/hhlin/time_streams_1957/test_gp052d/'
-time_str_patterns = time_str_folder + '*h5'
-phase_amp_files = time_str_folder + '*nodes*npy'
+time_str_folder = '/mnt/raid-project/gmrt/hhlin/time_streams_1957/'
+time_str_patterns = time_str_folder + '*536s_h5'
+phase_amp_files = time_str_folder + 'gp052_fit_nodes_7_tint_8.0sec_npy/*nodes*npy'
 
 def main():    
 
@@ -39,14 +39,15 @@ def main():
     band = args.band
 
 
-    if True: #combine all folding data in one single array.
+    if False: #combine all folding data in one single array.
 
         single_fold_shape = (int(8*paras.T/paras.tint), NPHASEBIN*2)
         fold_data = np.zeros((len(glob.glob(time_str_patterns))*single_fold_shape[0], single_fold_shape[1]))
 
         count = 0
-        for f in glob.glob(time_str_patterns):
+        for f in sorted(glob.glob(time_str_patterns)):
            ff = h5py.File(f, 'r')
+           print('ff',ff)
            fold_data[count*single_fold_shape[0]:(count+1)*single_fold_shape[0], :] = ff['fold_data_int_'+str(paras.tint)+'_band_'+str(band)]            
            count += 1
         print 'finished combining folding data'
@@ -112,12 +113,19 @@ def main():
         plot_svd(profile_norm_var, 'profile_norm_var')
         print 'finish SVD'
         check_noise(profile_norm_var)      
+ 
+    if False:
+        V = np.load('V_.npy')
         V_recon = V.reshape(V.shape[0], 2, V.shape[1]/2)
-
-
-        for ii in xrange(len(glob.glob(time_str_patterns))):
-            if ii % size == rank:
-                ff = glob.glob(time_str_patterns)[ii]
+ 
+#        for ii in xrange(len(glob.glob(time_str_patterns))):
+#            if ii % size == rank:
+        ii=[12, 20, 54]
+        for f in ii:
+            if f % size == rank:
+                ff = sorted(glob.glob(time_str_folder +'gp052*_*h5'))[f]
+                print('ff',ff)
+#                ff = glob.glob(time_str_patterns)[ii]
                 patterns = str(ff[-46:-29])
                 print 'patterns', patterns
                 this_file = h5py.File(ff,'r')
@@ -139,25 +147,25 @@ def main():
                 phase_fitting(profile_npy, V_recon, patterns, tint_stack)
 
 
-    if False:
-       # single_phase_amp = (int(8*paras.T/paras.tint/paras.prof_stack), (1+NMODES)*2)
-        single_phase_amp = (10, (1+NMODES)*2)
-        phases_amps = np.zeros((len(glob.glob(phase_amp_files))*single_phase_amp[0], single_phase_amp[1])
-        times = np.zeros(len(glob.glob(time_str_patterns))*single_phase_amp[0])
-        count = 0
+    if True:
+        lists_amps = []
+        lists_times = []
         for ii in xrange(len(glob.glob(phase_amp_files))):
-            ff = sorted(glob.glob(phase_amp_files))[ii]
-            phases_amps[count*single_phase_amp[0]:(count+1)*single_phase_amp[0], :] = ff[0:10, :]       
-            hh = sorted(glob.glob(time_str_patterns))[ii]
+            ff = np.load(sorted(glob.glob(phase_amp_files))[ii])
+#            hh = sorted(glob.glob(time_str_patterns))[ii]
+            hh = glob.glob(time_str_folder + str(sorted(glob.glob(phase_amp_files))[ii][-42:-25]) + '*h5')[0]
             this_file = h5py.File(hh, 'r')
             t00 = this_file['t00'][0]
-            t00_series = np.arange(t00, t00+8.*paras.T/86400, paras.tint*paras.prof_stack)
-            times[count*single_phase_amp[0]:(count+1)*single_phase_amp[0]] = t00_series
-            count += 1
+            t00_series = t00 + np.arange(0, 8.*paras.T, paras.tint*paras.prof_stack)/86400.
+            if ff.shape[0] == 67:
+                lists_amps.append(ff)
+                lists_times.append(t00_series)
+        phases_amps = np.vstack(lists_amps)
+        print 'phases_amps.shape', phases_amps.shape
+        times = np.hstack(lists_times)
+        print 'times.shape', times.shape
         print 'finished combining phases_amps and times data'
 
-        
-        npy_lik_file_v0_v1 = np.load('phase_amp_bin_lik_0.03125sec.npy')
         plot_phase_lik(times, phases_amps, 'phase_lik.png')
         plot_fit_amps(times, phases_amps, 'amp_ratios.png')
 
@@ -192,18 +200,19 @@ def plot_fit_amps(times, phases_amps, plot_name):
 
     plt.close('all')
     plt.plot(times, zeros_line, 'r--')
-    color = ['bo','rs']
-    label = ['Amp1/Amp0', 'Amp2/Amp0']
-    for ii in xrange((npy_lik_file.shape[1]-2)/2 -1):
+    color = ['bo','rs', 'g*']
+    label = ['Amp1/Amp0', 'Amp2/Amp0', 'Amp3/Amp0']
+    for ii in xrange(3):#xrange((npy_lik_file.shape[1]-2)/2 -1):
         plt.plot(times, (npy_lik_file[:,ii+2]/ npy_lik_file[:,1]), color[ii], label=label[ii], markersize=markersize)
     plt.xlim([xmin, xmax])
-    plt.xlabel('time (sec)', fontsize=fontsize)
+    plt.xlabel('time (MJD)', fontsize=fontsize)
     plt.ylabel('Fitting Amps ratio', fontsize=fontsize)
     plt.legend(loc='upper right', fontsize=fontsize-4)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
     plt.savefig(plot_name, bbox_inches='tight', dpi=300)
 
-        
+    plt.ylim([-0.5,0.5])
+    plt.savefig('zoom_'+plot_name, bbox_inches='tight', dpi=300)    
 
 
 def plot_phase_lik(times, phases_amps, plot_name):
@@ -224,11 +233,13 @@ def plot_phase_lik(times, phases_amps, plot_name):
     plt.plot(times, phase_bins, 'bo', markersize=markersize)
     plt.errorbar(times, phase_bins, yerr= phase_bin_errs, fmt='none', ecolor='b')
     plt.xlim([xmin, xmax])
-    plt.xlabel('time (sec)', fontsize=fontsize)
+    plt.xlabel('time (MJD)', fontsize=fontsize)
     plt.ylabel('Fitting phase errs', fontsize=fontsize)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
     plt.savefig(plot_name, bbox_inches='tight', dpi=300)
 
+    plt.ylim([-3,3])
+    plt.savefig('zoom_'+plot_name, bbox_inches='tight', dpi=300)
 
 
 def reconstruct_V(V, V0_raw, V1_raw):
@@ -553,9 +564,9 @@ def svd(file):
         V[0] = -V[0]
 
     if True:
-        np.save('B_U_.npy', U)
-        np.save('B_s_.npy', s)
-        np.save('B_V_.npy', V)
+        np.save('U_.npy', U)
+        np.save('s_.npy', s)
+        np.save('V_.npy', V)
 
     return U, s, V
 
@@ -715,9 +726,11 @@ def plot_phase_fft(data_fft, model_fft, ii, plot_name):
     ax4.plot(mode_range, np.roll(res_fft_imag, -int(len(freq)/2)),'gs', markersize=markersize)
     ax4.set_xlabel('Harmonic modes', fontsize=fontsize)
     ax4.set_xlim([xmin,xmax])
-    ax4.tick_params(axis='both', which='major', labelsize=fontsize)
-      
-    plt.savefig(plot_name + 'fft.png', bbox_inches='tight', dpi=300)
+    ax4.tick_params(axis='both', which='major', labelsize=fontsize)     
+    try:
+        plt.savefig(plot_name + 'fft.png', bbox_inches='tight', dpi=300)
+    except ValueError, IOError:
+        pass
 
 def plot_phase_ifft(pars_fit, data_L, data_R, V_fft_L, V_fft_R, ii, plot_name):
 
@@ -772,7 +785,11 @@ def plot_phase_ifft(pars_fit, data_L, data_R, V_fft_L, V_fft_R, ii, plot_name):
     ax2.set_ylabel('Residuals (T/Tsys)', fontsize=fontsize)
     ax2.tick_params(axis='both', which='major', labelsize=fontsize)
 
-    plt.savefig(plot_name + 'ifft.png', bbox_inches='tight', dpi=300)    
+    try:
+        plt.savefig(plot_name + 'ifft.png', bbox_inches='tight', dpi=300)    
+    except ValueError, IOError:
+        pass
+
 
 def plot_phase_diff_chi2(phase_diff_samples, likelihood, norm, ii, patterns):
     plot_name = patterns + 'fit_'
@@ -786,7 +803,10 @@ def plot_phase_diff_chi2(phase_diff_samples, likelihood, norm, ii, patterns):
     plt.xlim((phase_diff_range[np.where((likelihood / norm / (0.02/NPHASEBIN))>np.amax(likelihood / norm / (0.02/NPHASEBIN)) * 10**-4)[0][0]],phase_diff_range[np.where((likelihood / norm / (0.02/NPHASEBIN) )>np.amax(likelihood / norm / (0.02/NPHASEBIN)) * 10**-4)[0][-1]]))
     plt.ylim((np.amax(likelihood / norm / (0.02/NPHASEBIN)) * 10**-4, np.amax(likelihood / norm / (0.02/NPHASEBIN)) * 4.5))
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
-    plt.savefig(plot_name+'phase_chi2.png', bbox_inches='tight', dpi=300)
+    try:
+        plt.savefig(plot_name+'phase_chi2.png', bbox_inches='tight', dpi=300)
+    except ValueError, IOError:
+        pass
 
 
 if __name__ == '__main__':

@@ -36,11 +36,10 @@ def TFmt(t):
 
 def MakeFileList(rank, size):
     import itertools
-    epochs = ['d']
+    epochs = ['b','c']
+#    nums = [3]
 #    nums = [3, 4, 6, 7, 9, 10, 12, 13]
     nums = [15, 16, 18, 19, 21, 22]
-#    nums = [7, 9, 10, 12, 13, 15, 16, 18, 19, 21]
-#    nums = [3, 4, 6, 7, 9, 10]
 #    epochs = ['a', 'b', 'c', 'd']
 #    nums = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
     evn_gen = itertools.product(epochs, nums)
@@ -66,25 +65,39 @@ def FindOffset(ar_data, SR):
     offset_time = Time(math.ceil(t0.unix), format='unix', precision=9)
     offset = fh.seek(offset_time)
     t00 = np.float128(offset_time.mjd) # previous: isot
+    print('offset', offset)
+    print('t00', t00)
     return offset, t00
 
 def FindPhase(t0, z_size, dt, ngate):
+    print('z_size', z_size)
     polyco = Polyco('/mnt/raid-cita/mahajan/Pulsars/B1957Timing/polycob1957+20_gpfit.dat')
     p = polyco.phasepol(t0, rphase='fraction', t0=t0, time_unit=u.second, convert=True)
+#    print('p',p)
     ph = p(np.arange(z_size) * dt.to(u.s).value)
+#    print ('ph0',ph)
+#    print ('len(ph0)',len(ph))
     ph -= np.floor(ph[0])
-    print('ph1', ph)
+#    print('ph1', ph)
     ncycle = int(np.floor(ph[-1])) + 1
     ph = np.remainder(ph*ngate, ngate*ncycle).astype(np.float64)
-    print('ph2', ph)
+#    print('ph2', ph)
     return ph, ncycle
 
 def BasebandProcess(ar_data, band, SR, dt, N, DN, offset, i, dd_coh, ngate):
+    print('ar_data', ar_data)
     fh = mark4.open(ar_data, 'rs', ntrack=64, decade=2010, sample_rate=SR, thread_ids=[2*band, 2*band + 1])
     fh.seek(offset + i*(N - DN))
     t0 = fh.tell(unit='time')
+    print('t0',t0)
+    t1 = t0.mjd
+    print('t1',t1)
+    print('N-DN', N-DN)
+    print('dt', dt)
+    print('ngate', ngate)
+    # note ph is equilibrium to ((ph)*P0) / (P0/ngate) % ngate
     ph, ncycle = FindPhase(t0, N - DN, dt, ngate)
-    ph %= ngate
+    ph %= ngate 
     print('ph3', ph)
     z = fh.read(N)
     z = rfft(z, axis=0, **_fftargs)
