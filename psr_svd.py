@@ -7,6 +7,9 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib import cm
+from baseband import mark4
+from pulsar.predictor import Polyco
+import astropy.units as u
 import math
 from scipy import fftpack, optimize, interpolate, linalg, integrate
 from mpi4py import MPI
@@ -29,15 +32,36 @@ chi2_samples_const = paras.chi2_samples_const
 
 tint = paras.tint
 prof_stack = paras.prof_stack
+rawdata_folder = '/mnt/scratch-lustre/hhlin/Data/'
 time_str_folder = '/mnt/raid-project/gmrt/hhlin/time_streams_1957/'
-time_str_patterns = time_str_folder + '*536s_h5'
-phase_amp_files = time_str_folder + 'gp052_fit_nodes_7_tint_8.0sec_npy/*nodes*npy'
+time_str_patterns = time_str_folder + 'gp052*536s_h5'
+phase_amp_files = time_str_folder + 'gp052_fit_nodes_1_tint_8.0sec_npy/*nodes*npy'
+
+SR = paras.SR
+dt = paras.dt
+N, DN = paras.N, paras.DN
+block_length = paras.block_length
+fedge = paras.fedge
+fref = paras.fref
+ngate = paras.ngate
+
+with open("psrb1957+20.par") as fp:
+    for i, line in enumerate(fp):
+        if i == 6:
+            F0 = float(str(line[15:35]))
+        if i == 10:
+            PEPOCH = int(str(line[15:20]))
+P0 = 1/F0
+print 'P0', P0
+print 'PEPOCH', PEPOCH
+
+#args = CL_Parser()
+band = int(sys.argv[2])
+print band
 
 def main():    
 
-    args = CL_Parser()
-    band = args.band
-
+    generate_TOAs()
 
     if False: #combine all folding data in one single array.
 
@@ -118,15 +142,11 @@ def main():
         V = np.load('V_.npy')
         V_recon = V.reshape(V.shape[0], 2, V.shape[1]/2)
  
-#        for ii in xrange(len(glob.glob(time_str_patterns))):
-#            if ii % size == rank:
-        ii=[12, 20, 54]
-        for f in ii:
+        for f in xrange(len(glob.glob(time_str_patterns))):
             if f % size == rank:
-                ff = sorted(glob.glob(time_str_folder +'gp052*_*h5'))[f]
+                ff = sorted(glob.glob(time_str_patterns))[f]
                 print('ff',ff)
-#                ff = glob.glob(time_str_patterns)[ii]
-                patterns = str(ff[-46:-29])
+                patterns = str(ff[47:63])
                 print 'patterns', patterns
                 this_file = h5py.File(ff,'r')
                 print 'this_file', this_file, rank
@@ -147,13 +167,13 @@ def main():
                 phase_fitting(profile_npy, V_recon, patterns, tint_stack)
 
 
-    if True:
+    if False:
         lists_amps = []
         lists_times = []
         for ii in xrange(len(glob.glob(phase_amp_files))):
             ff = np.load(sorted(glob.glob(phase_amp_files))[ii])
 #            hh = sorted(glob.glob(time_str_patterns))[ii]
-            hh = glob.glob(time_str_folder + str(sorted(glob.glob(phase_amp_files))[ii][-42:-25]) + '*h5')[0]
+            hh = glob.glob(time_str_folder + str(sorted(glob.glob(phase_amp_files))[ii][81:97]) + '*h5')[0]
             this_file = h5py.File(hh, 'r')
             t00 = this_file['t00'][0]
             t00_series = t00 + np.arange(0, 8.*paras.T, paras.tint*paras.prof_stack)/86400.
@@ -168,6 +188,80 @@ def main():
 
         plot_phase_lik(times, phases_amps, 'phase_lik.png')
         plot_fit_amps(times, phases_amps, 'amp_ratios.png')
+
+
+def generate_TOAs():
+
+    '''generate a file of TOAs for tempo to refine'''
+
+    total_length = 8.*paras.T
+    folding_intv_length = paras.tint*paras.prof_stack
+
+    lists_TOAs = []
+    lists_TOAs_errs = []
+    for ii in xrange(len(glob.glob(phase_amp_files))):
+        if ii % size == rank:
+            ff = np.load(sorted(glob.glob(phase_amp_files))[ii])
+            pattern = str(sorted(glob.glob(phase_amp_files))[ii][81:97])
+            hh = glob.glob(time_str_folder + pattern + '*h5')[0]
+            ar_data = glob.glob(rawdata_folder + pattern)[0]
+#        this_file = h5py.File(hh, 'r')
+#        t00 = this_file['t00'][0]
+#        # Define the t00_series is that the average of the time of beginning and ending of the folding (fold_t_steps)
+#        fold_t_steps= np.linspace(0, total_length, total_length/folding_intv_length+1)
+#        fold_t_series = np.array([np.average((fold_t_steps[ii], fold_t_steps[ii+1])) for ii in xrange(len(fold_t_steps)-1)])        
+#        t00_series = t00 + fold_t_series/86400.
+
+            if ff.shape[0] == paras.T: 
+                # jj is the number of blocks
+                # tt is the the average of the time of beginning and ending of the folding. For example, if the folding length is 8 sec, then tt is 4 sec.
+                fold_t_steps = np.linspace(0, 8, 8./folding_intv_length+1+1)
+                tt = np.array([np.average((fold_t_steps[ii], fold_t_steps[ii+1])) for ii in xrange(len(fold_t_steps)-1)])
+                for jj in xrange(ff.shape[0]): 
+                    TOA = TOA_predictor(ar_data, jj, tt)
+                    lists_TOAs.append(TOA)
+                TOAs_errs = ff[:,ff.shape[1]/2] * P0
+                lists_TOAs_errs.append(TOAs_errs)
+            else: 
+                print 'warning: check the phase amp file, which the shape is not consistent.'
+                print sorted(glob.glob(phase_amp_files))[ii]   
+
+            TOAs = np.hstack(lists_TOAs)
+            print 'TOAs.shape', TOAs.shape
+            TOAs_errs = np.hstack(lists_TOAs_errs)
+            print 'TOAs_errs.shape', TOAs_errs.shape
+            np.save(pattern + '_TOAs_nodes_'+str(NMODES)+'_tint_'+str(tint_stack)+'.npy' , np.concatenate((TOAs, TOAs_errs)))
+
+
+def TOA_predictor(ar_data, jj, tt):
+    from astropy.time import Time
+    # get the offset time
+    fh = mark4.open(ar_data, 'rs', ntrack=64, decade=2010, sample_rate=SR)
+    t0 = fh.time0
+    offset_time = Time(math.ceil(t0.unix), format='unix', precision=9)
+    offset = fh.seek(offset_time)
+
+    # get the offset time in the block
+    fh = mark4.open(ar_data, 'rs', ntrack=64, decade=2010, sample_rate=SR, thread_ids=[2*band, 2*band + 1])
+    fh.seek(offset + jj*(N - DN))
+    t0 = fh.tell(unit='time')
+    t00 = t0.mjd
+
+    # get the phase
+    z_size = N-DN
+    polyco = Polyco('/mnt/raid-cita/mahajan/Pulsars/B1957Timing/polycob1957+20_gpfit.dat')
+    p = polyco.phasepol(t0, rphase='fraction', t0=t0, time_unit=u.second, convert=True)
+    # note that p(times with unit sec after the offset time) will give the rotation phases at that times.
+    ph = p(tt)
+    ph = ((ph)*P0) / (P0/ngate) % ngate
+
+    # combine the offset time, tt (time after the offset time), and the phase to get the TOA
+    event_time = t00 + tt/86400.
+    TOA = PEPOCH + ((event_time-PEPOCH)//P0 + ph)*P0
+
+    return TOA
+
+
 
 def CL_Parser():
     parser = argparse.ArgumentParser()
@@ -366,7 +460,7 @@ def phase_fitting(profiles, V, patterns, tint_stack):
 
 #        print 'pars_fit, cov, infodict, mesg, ier',pars_fit, cov, infodict, mesg, ier
         print "chi1, dof, chi2/dof:", chi2_fit, dof, red_chi2
-
+        print 'red_chi2', red_chi2
         cov_norm = cov * red_chi2
 
         errs = np.sqrt(cov_norm.flat[::len(pars_init) + 1])
@@ -390,7 +484,7 @@ def phase_fitting(profiles, V, patterns, tint_stack):
         plot_phase_fft(pick_harmonics(profile_fft_R), model_fft_R, ii, patterns+'fit_R_')
 #        plot_phase_ifft(pars_fit, profile_R, V_fft_R, ii, 'phase_fit_R_')
 
-        if True:
+        if False:
             # Fix phase at set values, then fit for amplitudes. Then integrate
             # the likelihood over the parameters space to get mean and std of
             # phase.
@@ -436,7 +530,11 @@ def phase_fitting(profiles, V, patterns, tint_stack):
             phase_diff_samples = np.array(phase_diff_samples)
             chi2_samples = np.array(chi2_samples, dtype=np.float64)
             chi2_samples -= chi2_samples_const # since chi2_samples are too large
-#            print 'chi2_samples', chi2_samples
+            print 'chi2_samples', chi2_samples
+            while np.amax(chi2_samples) > 1400:
+                chi2_samples -= 50
+            print 'np.amax(chi2_samples)', np.amax(chi2_samples)
+            print 'np.amin(chi2_samples)', np.amin(chi2_samples)
 
             if False:
                 #Plot of chi-squared (ln likelihood) function.
@@ -461,17 +559,19 @@ def phase_fitting(profiles, V, patterns, tint_stack):
             phase_errors_lik.append(std)
             profile_numbers_lik.append(ii)
             plot_phase_diff_chi2(phase_diff_samples, likelihood, norm, ii, patterns)
+            phase_amp_bin_lik = np.concatenate(([pars_init[0] + mean], pars_fit[1:], [std], errs[1:]))
+        else:
+            phase_amp_bin_lik = np.concatenate((pars_fit[:], errs[:]))
 
+
+        if True:
             '''save the fitting amp and bin as [bin, amps, bin_err, amp_errs]'''
             npy_lik_file = patterns+'fit_nodes_'+str(NMODES)+'_tint_'+str(tint_stack)+'_.npy'
-            phase_amp_bin_lik = np.concatenate(([pars_init[0] + mean], pars_fit[1:], [std], errs[1:]))
-
-            if True:
-                if os.path.exists(npy_lik_file):
-                    sequence = np.load(npy_lik_file)
-                    np.save(npy_lik_file, np.vstack((sequence, phase_amp_bin_lik)))
-                else:
-                    np.save(npy_lik_file, phase_amp_bin_lik)
+            if os.path.exists(npy_lik_file):
+                sequence = np.load(npy_lik_file)
+                np.save(npy_lik_file, np.vstack((sequence, phase_amp_bin_lik)))
+            else:
+                np.save(npy_lik_file, phase_amp_bin_lik)
 
 
 def stack(profile, profile_stack):
@@ -697,38 +797,39 @@ def plot_phase_fft(data_fft, model_fft, ii, plot_name):
     fontsize = 16
     markersize = 4
 
-    '''Plot for real and imag parts in the Fourier space.'''
-    plt.close('all')
-    f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharex='col', sharey='row', figsize=(16,9))
-    f.subplots_adjust(wspace=0.09, hspace=0.07)
-    mode_range = np.linspace(-len(freq)/2, len(freq)/2, num=len(freq), endpoint=True)
-    print 'len(freq)', len(freq)
-    xmax = np.amax(mode_range)
-    xmin = np.amin(mode_range)   
-    ax1.plot(mode_range, np.roll(data_fft_real, -int(len(freq)/2)),'bo', markersize=markersize)
-    ax1.plot(mode_range, np.roll(model_fft_real, -int(len(freq)/2)),'r-', markersize=markersize)
-    ax1.set_title('Real', size=fontsize)
-    ax1.set_xlim([xmin,xmax])
-    ax1.tick_params(axis='both', which='major', labelsize=fontsize)
-
-    ax2.plot(mode_range, np.roll(data_fft_imag, -int(len(freq)/2)),'bo', markersize=markersize)
-    ax2.plot(mode_range, np.roll(model_fft_imag, -int(len(freq)/2)),'r-', markersize=markersize)
-    ax2.set_title('Imag', size=fontsize)
-    ax2.set_xlim([xmin,xmax])
-    ax2.tick_params(axis='both', which='major', labelsize=fontsize)
-
-    ax3.plot(mode_range, np.roll(res_fft_real, -int(len(freq)/2)),'gs', markersize=markersize)
-    ax3.set_xlabel('Harmonic modes', fontsize=fontsize)
-    ax3.set_ylabel('Residuals (T/Tsys)', fontsize=fontsize)
-    ax3.set_xlim([xmin,xmax])
-    ax3.tick_params(axis='both', which='major', labelsize=fontsize)
-
-    ax4.plot(mode_range, np.roll(res_fft_imag, -int(len(freq)/2)),'gs', markersize=markersize)
-    ax4.set_xlabel('Harmonic modes', fontsize=fontsize)
-    ax4.set_xlim([xmin,xmax])
-    ax4.tick_params(axis='both', which='major', labelsize=fontsize)     
     try:
-        plt.savefig(plot_name + 'fft.png', bbox_inches='tight', dpi=300)
+        '''Plot for real and imag parts in the Fourier space.'''
+        plt.close('all')
+        f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharex='col', sharey='row', figsize=(16,9))
+        f.subplots_adjust(wspace=0.09, hspace=0.07)
+        mode_range = np.linspace(-len(freq)/2, len(freq)/2, num=len(freq), endpoint=True)
+        print 'len(freq)', len(freq)
+        xmax = np.amax(mode_range)
+        xmin = np.amin(mode_range)   
+        ax1.plot(mode_range, np.roll(data_fft_real, -int(len(freq)/2)),'bo', markersize=markersize)
+        ax1.plot(mode_range, np.roll(model_fft_real, -int(len(freq)/2)),'r-', markersize=markersize)
+        ax1.set_title('Real', size=fontsize)
+        ax1.set_xlim([xmin,xmax])
+        ax1.tick_params(axis='both', which='major', labelsize=fontsize)
+
+        ax2.plot(mode_range, np.roll(data_fft_imag, -int(len(freq)/2)),'bo', markersize=markersize)
+        ax2.plot(mode_range, np.roll(model_fft_imag, -int(len(freq)/2)),'r-', markersize=markersize)
+        ax2.set_title('Imag', size=fontsize)
+        ax2.set_xlim([xmin,xmax])
+        ax2.tick_params(axis='both', which='major', labelsize=fontsize)
+
+        ax3.plot(mode_range, np.roll(res_fft_real, -int(len(freq)/2)),'gs', markersize=markersize)
+        ax3.set_xlabel('Harmonic modes', fontsize=fontsize)
+        ax3.set_ylabel('Residuals (T/Tsys)', fontsize=fontsize)
+        ax3.set_xlim([xmin,xmax])
+        ax3.tick_params(axis='both', which='major', labelsize=fontsize)
+
+        ax4.plot(mode_range, np.roll(res_fft_imag, -int(len(freq)/2)),'gs', markersize=markersize)
+        ax4.set_xlabel('Harmonic modes', fontsize=fontsize)
+        ax4.set_xlim([xmin,xmax])
+        ax4.tick_params(axis='both', which='major', labelsize=fontsize)     
+
+        f.savefig(plot_name+'fft.png')
     except ValueError, IOError:
         pass
 
