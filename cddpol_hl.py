@@ -123,7 +123,7 @@ block_length = paras.block_length
 fedge = paras.fedge
 fref = paras.fref
 print("[{0}: {1}] Using band {2}+{3} MHz (Ref. Freq. is {4})".format(mpstr, TFmt(main_t0), (fedge[band].value), (SR.value/2), (fref)))
-#dd_coh = CoherentDD(fedge[band], fref, N, dt)
+dd_coh = CoherentDD(fedge[band], fref, N, dt)
 
 for fi, evn_file in enumerate(evn_files):
     file_t0 = time.time()

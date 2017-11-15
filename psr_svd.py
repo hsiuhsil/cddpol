@@ -22,6 +22,12 @@ comm = MPI.COMM_WORLD
 size = comm.Get_size()
 rank = comm.Get_rank()
 
+rawdata_folder = '/mnt/scratch-lustre/hhlin/Data/'
+time_str_folder = '/mnt/raid-project/gmrt/hhlin/time_streams_1957/'
+time_str_patterns = time_str_folder + 'gp052*536s_h5'
+phase_amp_files = time_str_folder + 'gp052_fit_nodes_1_tint_8.0sec_npy/*nodes*npy'
+TOAs_files = time_str_folder + 'gp052_TOA_nodes_1_tint_8.0sec_npy/*nodes*npy'
+
 NHARMONIC = paras.NHARMONIC 
 NMODES = paras.NMODES
 
@@ -32,10 +38,7 @@ chi2_samples_const = paras.chi2_samples_const
 
 tint = paras.tint
 prof_stack = paras.prof_stack
-rawdata_folder = '/mnt/scratch-lustre/hhlin/Data/'
-time_str_folder = '/mnt/raid-project/gmrt/hhlin/time_streams_1957/'
-time_str_patterns = time_str_folder + 'gp052*536s_h5'
-phase_amp_files = time_str_folder + 'gp052_fit_nodes_1_tint_8.0sec_npy/*nodes*npy'
+tint_stack = paras.tint*paras.prof_stack
 
 SR = paras.SR
 dt = paras.dt
@@ -61,7 +64,8 @@ print band
 
 def main():    
 
-    generate_TOAs()
+#    generate_TOAs()
+    generate_tim_file()
 
     if False: #combine all folding data in one single array.
 
@@ -189,6 +193,31 @@ def main():
         plot_phase_lik(times, phases_amps, 'phase_lik.png')
         plot_fit_amps(times, phases_amps, 'amp_ratios.png')
 
+def generate_tim_file():
+
+    obs_code = 3 # AO
+
+    TOA_err_threshold = 3 # in the unit of microsecond
+ 
+    ff = [np.load(ii) for ii in sorted(glob.glob(TOAs_files))]
+    tt = [ff[ii][jj] for ii in xrange(len(ff)) for jj in xrange(len(ff[0])) if ff[ii][jj][1] < TOA_err_threshold]
+    errs = [tt[ii][1] for ii in xrange(len(tt))]
+    if True:
+        fontsize = 16
+        plt.close('all')
+        plt.figure()
+        plt.hist(errs, 1000, normed=True )
+        plt.xlim((min(errs), max(errs)))
+#        plt.ylabel('V values', fontsize=fontsize)
+        plt.gca().set_xscale("log")
+        plt.gca().set_yscale("log")
+        plt.tick_params(axis='both', which='major', labelsize=fontsize)
+        plt.savefig('TOAs_errs.png', bbox_inches='tight', dpi=300)       
+
+    with open("1957_TOAs.tim", "a") as fp:    
+        for ii in xrange(len(tt)):
+            fp.write(str(obs_code)+str(' ')*14+("%.3f" % round(paras.fref.value,3))+str(' ')*2+("%.13f" % round(tt[ii][0],13))+str(' ')*1+("%.4f" % round(tt[ii][1],4))+"\n")
+    print 'finished the tim file'
 
 def generate_TOAs():
 
@@ -197,8 +226,6 @@ def generate_TOAs():
     total_length = 8.*paras.T
     folding_intv_length = paras.tint*paras.prof_stack
 
-    lists_TOAs = []
-    lists_TOAs_errs = []
     for ii in xrange(len(glob.glob(phase_amp_files))):
         if ii % size == rank:
             ff = np.load(sorted(glob.glob(phase_amp_files))[ii])
@@ -215,25 +242,24 @@ def generate_TOAs():
             if ff.shape[0] == paras.T: 
                 # jj is the number of blocks
                 # tt is the the average of the time of beginning and ending of the folding. For example, if the folding length is 8 sec, then tt is 4 sec.
-                fold_t_steps = np.linspace(0, 8, 8./folding_intv_length+1+1)
+                fold_t_steps = np.linspace(0, 8, 8./folding_intv_length+1)
                 tt = np.array([np.average((fold_t_steps[ii], fold_t_steps[ii+1])) for ii in xrange(len(fold_t_steps)-1)])
+                # create an array of TOAs and errs, which is in the shape of (TOAs, TOA_errs)
+                TOAs = np.zeros((ff.shape[0], 2))
+
+                print 'starting generating TOAs'
                 for jj in xrange(ff.shape[0]): 
-                    TOA = TOA_predictor(ar_data, jj, tt)
-                    lists_TOAs.append(TOA)
-                TOAs_errs = ff[:,ff.shape[1]/2] * P0
-                lists_TOAs_errs.append(TOAs_errs)
+                    TOA = TOA_predictor(ar_data, jj, tt, ff[jj,0])
+                    TOAs[jj, 0] = TOA
+                TOAs[:, 1] = ff[:,ff.shape[1]/2] * (P0/ngate) * 1e6 # in the unit of microseconds
             else: 
                 print 'warning: check the phase amp file, which the shape is not consistent.'
                 print sorted(glob.glob(phase_amp_files))[ii]   
 
-            TOAs = np.hstack(lists_TOAs)
-            print 'TOAs.shape', TOAs.shape
-            TOAs_errs = np.hstack(lists_TOAs_errs)
-            print 'TOAs_errs.shape', TOAs_errs.shape
-            np.save(pattern + '_TOAs_nodes_'+str(NMODES)+'_tint_'+str(tint_stack)+'.npy' , np.concatenate((TOAs, TOAs_errs)))
+            np.save(pattern + '_TOAs_nodes_'+str(NMODES)+'_tint_'+str(tint_stack)+'.npy', TOAs)
 
 
-def TOA_predictor(ar_data, jj, tt):
+def TOA_predictor(ar_data, jj, tt, phase_correction):
     from astropy.time import Time
     # get the offset time
     fh = mark4.open(ar_data, 'rs', ntrack=64, decade=2010, sample_rate=SR)
@@ -255,9 +281,9 @@ def TOA_predictor(ar_data, jj, tt):
     ph = p(tt)
     ph = ((ph)*P0) / (P0/ngate) % ngate
 
-    # combine the offset time, tt (time after the offset time), and the phase to get the TOA
+    # combine the offset time, tt (time after the offset time), the predicting phase, and the correction of the predicting phase (produced by fitting) to get the TOA, which is in the unit of MJD.
     event_time = t00 + tt/86400.
-    TOA = PEPOCH + ((event_time-PEPOCH)//P0 + ph)*P0
+    TOA = PEPOCH + ((event_time-PEPOCH)//P0 + (ph + phase_correction)/ngate/86400.)*P0
 
     return TOA
 
