@@ -287,8 +287,8 @@ def TOA_predictor(ar_data, jj, tt, phase_correction):
     print 'ph',ph
     # combine the offset time, tt (time after the offset time), the predicting phase, and the correction of the predicting phase (produced by fitting) to get the TOA, which is in the unit of MJD.
     event_time = t00 + tt/86400.
-#    TOA = PEPOCH + ((event_time-PEPOCH)*86400//P0 + (ph + phase_correction)/ngate)*P0/86400.
-    TOA = PEPOCH + ((event_time-PEPOCH)*86400//P0 + ph/ngate)*P0/86400.
+    TOA = PEPOCH + ((event_time-PEPOCH)*86400//P0 + (ph + phase_correction)/ngate)*P0/86400.
+#    TOA = PEPOCH + ((event_time-PEPOCH)*86400//P0 + ph/ngate)*P0/86400.
 
     return TOA
 
