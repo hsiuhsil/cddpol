@@ -198,7 +198,8 @@ def generate_tim_file():
     obs_code = 3 # AO
 
     TOA_err_threshold = 3 # in the unit of microsecond
- 
+
+#    ff = [np.load('gp052a_ar_no0003_TOAs_nodes_1_tint_8.0.npy')] 
     ff = [np.load(ii) for ii in sorted(glob.glob(TOAs_files))]
     tt = [ff[ii][jj] for ii in xrange(len(ff)) for jj in xrange(len(ff[0])) if ff[ii][jj][1] < TOA_err_threshold]
     errs = [tt[ii][1] for ii in xrange(len(tt))]
@@ -215,8 +216,10 @@ def generate_tim_file():
         plt.savefig('TOAs_errs.png', bbox_inches='tight', dpi=300)       
 
     with open("1957_TOAs.tim", "a") as fp:    
+        fp.write('MODE '+str(1)+"\n")
+        fp.write('INFO '+str(0)+"\n")
         for ii in xrange(len(tt)):
-            fp.write(str(obs_code)+str(' ')*14+("%.3f" % round(paras.fref.value,3))+str(' ')*2+("%.13f" % round(tt[ii][0],13))+str(' ')*1+("%.4f" % round(tt[ii][1],4))+"\n")
+            fp.write(str(obs_code)+str(' ')*14+("%.3f" % round(paras.fref.value,3))+str(' ')*2+("%.13f" % round(tt[ii][0],13))+str(' ')*1+("%.7f" % round(tt[ii][1],7))+"\n")
     print 'finished the tim file'
 
 def generate_TOAs():
@@ -230,6 +233,7 @@ def generate_TOAs():
         if ii % size == rank:
             ff = np.load(sorted(glob.glob(phase_amp_files))[ii])
             pattern = str(sorted(glob.glob(phase_amp_files))[ii][81:97])
+            print 'pattern',pattern
             hh = glob.glob(time_str_folder + pattern + '*h5')[0]
             ar_data = glob.glob(rawdata_folder + pattern)[0]
 #        this_file = h5py.File(hh, 'r')
@@ -263,8 +267,8 @@ def TOA_predictor(ar_data, jj, tt, phase_correction):
     from astropy.time import Time
     # get the offset time
     fh = mark4.open(ar_data, 'rs', ntrack=64, decade=2010, sample_rate=SR)
-    t0 = fh.time0
-    offset_time = Time(math.ceil(t0.unix), format='unix', precision=9)
+    t_0 = fh.time0
+    offset_time = Time(math.ceil(t_0.unix), format='unix', precision=9)
     offset = fh.seek(offset_time)
 
     # get the offset time in the block
@@ -280,10 +284,11 @@ def TOA_predictor(ar_data, jj, tt, phase_correction):
     # note that p(times with unit sec after the offset time) will give the rotation phases at that times.
     ph = p(tt)
     ph = ((ph)*P0) / (P0/ngate) % ngate
-
+    print 'ph',ph
     # combine the offset time, tt (time after the offset time), the predicting phase, and the correction of the predicting phase (produced by fitting) to get the TOA, which is in the unit of MJD.
     event_time = t00 + tt/86400.
-    TOA = PEPOCH + ((event_time-PEPOCH)//P0 + (ph + phase_correction)/ngate/86400.)*P0
+#    TOA = PEPOCH + ((event_time-PEPOCH)*86400//P0 + (ph + phase_correction)/ngate)*P0/86400.
+    TOA = PEPOCH + ((event_time-PEPOCH)*86400//P0 + ph/ngate)*P0/86400.
 
     return TOA
 
