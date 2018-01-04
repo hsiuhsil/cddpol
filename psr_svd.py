@@ -24,9 +24,11 @@ rank = comm.Get_rank()
 
 rawdata_folder = '/mnt/scratch-lustre/hhlin/Data/'
 time_str_folder = '/mnt/raid-project/gmrt/hhlin/time_streams_1957/'
-time_str_patterns = time_str_folder + 'gp052*536s_h5'
+#time_str_patterns = time_str_folder + 'gp052*536s_h5'
+time_str_patterns = time_str_folder + 'gp052a_ar_no0007*536s_h5'
 phase_amp_files = time_str_folder + 'gp052_fit_nodes_1_tint_8.0sec_npy/*nodes*npy'
 TOAs_files = time_str_folder + 'gp052_TOA_nodes_1_tint_8.0sec_npy/*nodes*npy'
+#TOAs_files = time_str_folder + 'gp052_TOA_nodes_1_tint_8.0sec_npy_zerocentre/*nodes*npy'
 
 NHARMONIC = paras.NHARMONIC 
 NMODES = paras.NMODES
@@ -64,8 +66,12 @@ print band
 
 def main():    
 
+#    plot_ut_phase_time_streams()
+    plot_rms_binning()
+#    plot_ut_phase_correlation()
+#    TOAs_debug()
 #    generate_TOAs()
-    generate_tim_file()
+#    generate_tim_file()
 
     if False: #combine all folding data in one single array.
 
@@ -112,7 +118,9 @@ def main():
     if False: 
         '''Reconstruct V modes'''
 #        profile = B_data_stack
-        profile = fold_data
+#        profile = fold_data
+        this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
+        profile = this_file['fold_data_int_0.125_band_0'][:2400,:] #5mins dataset
 
         # remove signal modes, and reconstruct noise profiles.
         U, s, V = svd(profile)
@@ -120,7 +128,9 @@ def main():
         V1_raw = copy.deepcopy(V[1])
         V[0] = 0
         V[1] = 0
-        noise_profiles = reconstruct_profile(U,s,V)
+        '''double the noise'''
+        noise_profiles_raw = reconstruct_profile(U,s,V)
+        noise_profiles = 2*noise_profiles_raw
         print 'noise_profiles.shape', noise_profiles.shape
 
         # get an estimate of the noise level, for each the R and L polarizations.
@@ -135,10 +145,15 @@ def main():
             profile_norm_var_L[ii] = norm_variance_profile(profile[ii, 0:profile.shape[1]/2], noise_var_L)
             profile_norm_var_R[ii] = norm_variance_profile(profile[ii, profile.shape[1]/2:profile.shape[1]], noise_var_R)
         profile_norm_var = np.concatenate((profile_norm_var_L, profile_norm_var_R), axis=1)
+
+        profile_norm_var = profile_norm_var[:, :]
+        print 'profile_norm_var.shape', profile_norm_var.shape
+        plot_spec_dedisperse(profile_norm_var)
+
         print 'finish profile_norm_var'
         # SVD on the normalized variance profile.
         U, s, V = svd(profile_norm_var)
-        plot_svd(profile_norm_var, 'profile_norm_var')
+        plot_svd(profile_norm_var, 'profile_norm_var_2tn')
         print 'finish SVD'
         check_noise(profile_norm_var)      
  
@@ -153,11 +168,22 @@ def main():
                 patterns = str(ff[47:63])
                 print 'patterns', patterns
                 this_file = h5py.File(ff,'r')
+#                this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/2tn_gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
+                profile_raw = this_file['fold_data_int_0.125_band_0'][:2400,:] 
                 print 'this_file', this_file, rank
-                profile = this_file['fold_data_int_'+str(paras.tint)+'_band_'+str(band)]
+#                profile = this_file['fold_data_int_'+str(paras.tint)+'_band_'+str(band)]
+                '''double the noise'''
+                if True:
+                    profile = np.zeros(profile_raw.shape)
+                    for ii in xrange(profile_raw.shape[0]):
+                        profile[ii] = profile_raw[ii] + noise_profiles_raw[ii]
+                    print 'finish adding the noise to the profile.'
+                else:
+                    profile = profile_raw
+
 
                 '''stack profiles'''
-                if True:
+                if False:
                     profile = stack(profile, paras.prof_stack)
                     tint_stack = paras.tint*paras.prof_stack
                 else:
@@ -193,6 +219,18 @@ def main():
         plot_phase_lik(times, phases_amps, 'phase_lik.png')
         plot_fit_amps(times, phases_amps, 'amp_ratios.png')
 
+    if False:
+        t_end = 300 #sec
+        print 't_end: ', t_end
+        tint_stack = paras.tint*paras.prof_stack
+        times = np.arange(0, t_end, tint_stack)
+        phases_amps_1 = np.load('gp052a_ar_no0007fit_nodes_1_tint_30.0.npy')
+        phases_amps_2 = np.load('gp052a_ar_no0007fit_nodes_2_tint_30.0.npy')
+
+        plot_phase_lik(times, phases_amps_1[:len(times)], tint_stack, 'phase_lik_nodes_1_tint_'+str(tint_stack)+'sec.png')
+        plot_phase_lik(times, phases_amps_2[:len(times)], tint_stack, 'phase_lik_nodes_2_tint_30.0sec.png')
+        
+
 def generate_tim_file():
 
     obs_code = 3 # AO
@@ -222,6 +260,34 @@ def generate_tim_file():
             fp.write(str(obs_code)+str(' ')*14+("%.3f" % round(paras.fref.value,3))+str(' ')*2+("%.13f" % round(tt[ii][0],13))+str(' ')*1+("%.7f" % round(tt[ii][1],7))+"\n")
     print 'finished the tim file'
 
+def TOAs_debug():
+    '''the file is in the shape of(epochs, [TOAs, TOAs uncertainties in microseconds, TOAs phase predictor in phase bins, and fitting phase bins])'''
+    ff = np.load('gp052a_ar_no0003_TOAs_nodes_1_tint_8.0.npy')
+
+    times = ff[13:63,0]
+    phase_centre = ff[13:63, 2]
+    phase_fitting = ff[13:63, 3]
+    color = ['bo','rs'] # 'g*'
+    label = ['phase bin predictors', 'phase bin measurements']
+    xmin = np.amin(times)
+    xmax = np.amax(times)
+    markersize = 4.0
+    fontsize = 16
+
+    plt.close('all')
+#    for ii in xrange():#xrange((npy_lik_file.shape[1]-2)/2 -1):
+    plt.plot(times, phase_centre, color[0], label=label[0], markersize=markersize)
+    plt.plot(times, phase_fitting, color[1], label=label[1], markersize=markersize)
+    plt.xlim([xmin, xmax])
+    plt.xlabel('TOAs (MJD)', fontsize=fontsize)
+    plt.ylabel('Phase bins', fontsize=fontsize)
+    plt.legend(loc='upper right', fontsize=fontsize-4)
+    plt.tick_params(axis='both', which='major', labelsize=fontsize)
+    plt.grid()
+    plt.savefig('debug_TOAs.png', bbox_inches='tight', dpi=300)
+
+
+
 def generate_TOAs():
 
     '''generate a file of TOAs for tempo to refine'''
@@ -249,12 +315,14 @@ def generate_TOAs():
                 fold_t_steps = np.linspace(0, 8, 8./folding_intv_length+1)
                 tt = np.array([np.average((fold_t_steps[ii], fold_t_steps[ii+1])) for ii in xrange(len(fold_t_steps)-1)])
                 # create an array of TOAs and errs, which is in the shape of (TOAs, TOA_errs)
-                TOAs = np.zeros((ff.shape[0], 2))
+                TOAs = np.zeros((ff.shape[0], 4))
 
                 print 'starting generating TOAs'
                 for jj in xrange(ff.shape[0]): 
-                    TOA = TOA_predictor(ar_data, jj, tt, ff[jj,0])
+                    TOA, ph = TOA_predictor(ar_data, jj, tt, ff[jj,0])
                     TOAs[jj, 0] = TOA
+                    TOAs[jj, 2] = ph
+                    TOAs[jj, 3] = ff[jj,0]
                 TOAs[:, 1] = ff[:,ff.shape[1]/2] * (P0/ngate) * 1e6 # in the unit of microseconds
             else: 
                 print 'warning: check the phase amp file, which the shape is not consistent.'
@@ -288,9 +356,42 @@ def TOA_predictor(ar_data, jj, tt, phase_correction):
     # combine the offset time, tt (time after the offset time), the predicting phase, and the correction of the predicting phase (produced by fitting) to get the TOA, which is in the unit of MJD.
     event_time = t00 + tt/86400.
     TOA = PEPOCH + ((event_time-PEPOCH)*86400//P0 + (ph + phase_correction)/ngate)*P0/86400.
+#    TOA = PEPOCH + ((event_time-PEPOCH)*86400//P0 + ((ph + phase_correction) - (ngate/2))/ngate)*P0/86400.
 #    TOA = PEPOCH + ((event_time-PEPOCH)*86400//P0 + ph/ngate)*P0/86400.
 
-    return TOA
+    return TOA, ph
+
+def plot_spec_dedisperse(spec):
+#    this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
+#    spec = this_file['fold_data_int_0.125_band_0']
+    spec_L = spec[:, 0:spec.shape[1]/2]
+    spec_R = spec[:, spec.shape[1]/2:]
+    spec_mean = np.mean((spec_L,spec_R), axis=0)
+    
+    cmap = cm.winter
+    extent = [0, paras.ngate, len(spec)*0.125, 0]
+
+    plt.close('all')
+    plt.imshow(spec_L, extent=extent, aspect='auto', cmap = cmap)
+    plt.colorbar()
+    plt.xlabel('Phase Bins')
+    plt.ylabel('Time (Sec)')
+    plt.savefig('spec_L.png', bbox_inches='tight', dpi=300)
+
+    plt.close('all')
+    plt.imshow(spec_R, extent=extent, aspect='auto', cmap = cmap)
+    plt.colorbar()
+    plt.xlabel('Phase Bins')
+    plt.ylabel('Time (Sec)')
+    plt.savefig('spec_R.png', bbox_inches='tight', dpi=300)
+
+    plt.close('all')
+    plt.imshow(spec_mean, extent=extent, aspect='auto', cmap = cmap)
+    plt.colorbar()
+    plt.xlabel('Phase Bins')
+    plt.ylabel('Time (Sec)')
+    plt.savefig('spec_mean.png', bbox_inches='tight', dpi=300)
+
 
 
 
@@ -340,31 +441,221 @@ def plot_fit_amps(times, phases_amps, plot_name):
     plt.savefig('zoom_'+plot_name, bbox_inches='tight', dpi=300)    
 
 
-def plot_phase_lik(times, phases_amps, plot_name):
+def plot_phase_lik(times, phases_amps, tint_stack, plot_name):
 
+    '''stacked profiles'''
     npy_lik_file = phases_amps
-#    profile_numbers = np.arange(0, len(npy_lik_file)*tint*prof_stack, tint*prof_stack)
     xmin = np.amin(times)
     xmax = np.amax(times)
     zeros_line = np.zeros(len(npy_lik_file[:]))
     phase_bins = npy_lik_file[:,0]
     phase_bin_errs = npy_lik_file[:,npy_lik_file.shape[1]/2]
 
+    z_stacked = np.polyfit(times, phase_bins, 2)
+    p_stacked = np.poly1d(z_stacked)
+    parabola_stacked = p_stacked(times)
+    phase_bins_para = phase_bins - parabola_stacked 
+
+
+    '''rebinned the phase measurements'''
+    times_100 = np.arange(0,300,tint_stack)
+    if plot_name == 'phase_lik_nodes_1_tint_30.0sec.png':
+        phase_bins_all = np.load('gp052a_ar_no0007fit_nodes_1_tint_0.125.npy')
+    elif plot_name == 'phase_lik_nodes_2_tint_30.0sec.png':
+        phase_bins_all = np.load('gp052a_ar_no0007fit_nodes_2_tint_0.125.npy')
+    phase_bins_100 = np.mean(phase_bins_all[:2400,0].reshape(2400/paras.prof_stack, paras.prof_stack), axis=1)
+
+    z_rebinned = np.polyfit(times_100, phase_bins_100, 2)
+    p_rebinned = np.poly1d(z_rebinned)
+    parabola_rebinned = p_stacked(times_100)
+    phase_bins_100_para = phase_bins_100 - parabola_rebinned
+
+#    plt.plot(times_100, phase_bins_100, 'ys', markersize=markersize+2)
+    ut = np.load('UT_.npy')
+    ut1 = ut[1]
+
     markersize = 2.0
     fontsize = 16
 
+    # before subracting the fitting parabola
     plt.close('all')
     plt.plot(times, zeros_line, 'r--')
     plt.plot(times, phase_bins, 'bo', markersize=markersize)
     plt.errorbar(times, phase_bins, yerr= phase_bin_errs, fmt='none', ecolor='b')
+    plt.plot(times, parabola_stacked, 'g', label='para_stacked')
+    plt.plot(times_100, phase_bins_100, 'ys', markersize=markersize)
+    plt.plot(times, parabola_rebinned, 'm', label='para_rebinned')
+    title = 'RMS_stacked: '+str(np.round(np.std(phase_bins),3))+', RMS_rebinned: '+str(np.round(np.std(phase_bins_100),3))    
+    plt.title(title, fontsize=fontsize)
     plt.xlim([xmin, xmax])
-    plt.xlabel('time (MJD)', fontsize=fontsize)
-    plt.ylabel('Fitting phase errs', fontsize=fontsize)
+    plt.xlabel('time (sec)', fontsize=fontsize)
+    plt.ylabel('Fitting phase bin errs', fontsize=fontsize)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
+    plt.legend(loc='upper right', fontsize=fontsize-4)
+    plot_name = 'before_'+plot_name
     plt.savefig(plot_name, bbox_inches='tight', dpi=300)
 
-    plt.ylim([-3,3])
-    plt.savefig('zoom_'+plot_name, bbox_inches='tight', dpi=300)
+    # after subracting the fitting parabola
+    plt.close('all')
+    plt.plot(times, zeros_line, 'r--')
+    plt.plot(times, phase_bins_para, 'bo', markersize=markersize)
+    plt.errorbar(times, phase_bins_para, yerr= phase_bin_errs, fmt='none', ecolor='b')
+#    plt.plot(times, parabola_stacked, 'g', label='para_stacked')
+    plt.plot(times_100, phase_bins_100_para, 'ys', markersize=markersize)
+#    plt.plot(times, parabola_rebinned, 'm', label='para_rebinned')
+    title = 'RMS_stacked: '+str(np.round(np.std(phase_bins_para),3))+', RMS_rebinned: '+str(np.round(np.std(phase_bins_100_para),3))
+    plt.title(title, fontsize=fontsize)
+    plt.xlim([xmin, xmax])
+    plt.xlabel('time (sec)', fontsize=fontsize)
+    plt.ylabel('Fitting phase bin errs', fontsize=fontsize)
+    plt.tick_params(axis='both', which='major', labelsize=fontsize)
+    plt.legend(loc='upper right', fontsize=fontsize-4)
+    plot_name = 'after_'+plot_name
+    plt.savefig(plot_name, bbox_inches='tight', dpi=300)
+
+def plot_ut_phase_time_streams():
+
+    ut = np.load('UT_.npy')
+    ut1 = ut[1]
+    phase_file_1 = np.load('gp052a_ar_no0007fit_nodes_1_tint_0.125.npy')
+    phase_file_2 = np.load('gp052a_ar_no0007fit_nodes_2_tint_0.125.npy')
+    phase_bins_1 = phase_file_1[:2400, 0]
+    phase_bins_2 = phase_file_2[:2400, 0]
+
+    tot_chunk = 5
+    for ii in xrange(tot_chunk):
+        ut1_chunk = ut1[ii*(2400/tot_chunk):(ii+1)*(2400/tot_chunk)] * 25
+        phase_bins_1_chunk = phase_bins_1[ii*(2400/tot_chunk):(ii+1)*(2400/tot_chunk)] -3
+        phase_bins_2_chunk = phase_bins_2[ii*(2400/tot_chunk):(ii+1)*(2400/tot_chunk)] -6
+
+        markersize = 4.0
+        fontsize = 16
+
+        plt.close('all')
+        x_axis = np.arange(ii*(2400/tot_chunk)*0.125, (ii+1)*(2400/tot_chunk)*0.125, 0.125)
+        plt.plot(x_axis, ut1_chunk, 'g', label='The U1 mode')
+        plt.plot(x_axis, phase_bins_1_chunk, 'ro', markersize=markersize, label='1 mode')
+        plt.plot(x_axis, phase_bins_1_chunk, 'r')
+        plt.plot(x_axis, phase_bins_2_chunk, 'bs', markersize=markersize, label='2 modes')
+        plt.plot(x_axis, phase_bins_2_chunk, 'b--')
+        title = 'RMS of 1 mode: '+str(np.round(np.std(phase_bins_1_chunk),3))+', RMS of 2 modes: '+str(np.round(np.std(phase_bins_2_chunk),3))
+        plt.title(title, fontsize=fontsize)
+        plt.xlabel('Time (sec)', fontsize=fontsize)
+        plt.ylabel('Time streams', fontsize=fontsize)
+        plt.ylim([-10,4])
+        plt.tick_params(axis='both', which='major', labelsize=fontsize)
+        plt.legend(loc='upper right', fontsize=fontsize-5)
+        plot_name = 'u1_phase_stream_'+str(tot_chunk)+'_'+str(ii)+'.png'
+        plt.savefig(plot_name, bbox_inches='tight', dpi=300)
+
+def plot_ut_phase_correlation():
+    
+    ut = np.load('UT_.npy')
+    phase_file_1 = np.load('gp052a_ar_no0007fit_nodes_1_tint_0.125.npy')
+    phase_file_2 = np.load('gp052a_ar_no0007fit_nodes_2_tint_0.125.npy')
+    phase_bins_1 = phase_file_1[:2400, 0]
+    phase_bins_2 = phase_file_2[:2400, 0]    
+
+    modes_U = 10
+    cor_1 = np.zeros(modes_U) 
+    cor_2 = np.zeros(modes_U)
+    for ii in xrange(modes_U):
+        cor_1[ii] = np.correlate(ut[ii], phase_bins_1)
+        cor_2[ii] = np.correlate(ut[ii], phase_bins_2)
+
+    markersize = 4.0
+    fontsize = 16
+    
+    plt.close('all')
+    x_axis = np.arange(modes_U)
+    plt.plot(x_axis, cor_1, 'ro', markersize=markersize, label='1 mode')
+    plt.plot(x_axis, cor_1, 'r')
+    plt.plot(x_axis, cor_2, 'bs', markersize=markersize, label='2 modes')
+    plt.plot(x_axis, cor_2, 'b--')
+    plt.xlabel('U modes', fontsize=fontsize)
+    plt.ylabel('Correlation', fontsize=fontsize)
+    plt.tick_params(axis='both', which='major', labelsize=fontsize)
+    plt.legend(loc='upper right', fontsize=fontsize-4)
+    plot_name = 'u_phase_bins_cor.png'
+    plt.savefig(plot_name, bbox_inches='tight', dpi=300)
+
+def plot_rms_binning():
+
+    bin_size = P0 / ngate * 10**6 #microsecond
+    phase_file_1 = np.load('gp052a_ar_no0007fit_nodes_1_tint_0.125_2tn.npy')
+    phase_file_2 = np.load('gp052a_ar_no0007fit_nodes_2_tint_0.125_2tn.npy')
+    phase_bins_1 = phase_file_1[:2400, 0] * bin_size # change unit from phase bins to microseconds
+    phase_bins_2 = phase_file_2[:2400, 0] * bin_size
+
+    rebin_factor = [1, 2, 4, 8, 16, 32, 60, 120, 240, 480]
+    rebin_time = np.array(rebin_factor)*0.125
+
+    tt = np.arange(0.125,60,1)
+
+    phase_bins_1_rebin_rms = np.zeros(len(rebin_factor))
+    phase_bins_1_rebin_rms_para = np.zeros(len(rebin_factor))
+    phase_bins_2_rebin_rms = np.zeros(len(rebin_factor))
+    phase_bins_2_rebin_rms_para = np.zeros(len(rebin_factor))
+
+#    for ii in xrange(4, 8):
+    for ii in xrange(len(rebin_factor)):
+        # before subtracting parabola
+        phase_bins_1_reshape = np.mean(phase_bins_1.reshape(len(phase_bins_1)/rebin_factor[ii], rebin_factor[ii]), axis=1)
+        phase_bins_1_rebin_rms[ii] = np.std(phase_bins_1_reshape)
+        phase_bins_2_reshape = np.mean(phase_bins_2.reshape(len(phase_bins_2)/rebin_factor[ii], rebin_factor[ii]), axis=1)
+        phase_bins_2_rebin_rms[ii] = np.std(phase_bins_2_reshape)
+
+        # after subtracting parabola
+        times = np.arange(0, 300, rebin_time[ii])
+#        print 'len(times)', len(times)
+#        print 'len(phase_bins_1_reshape)', len(phase_bins_1_reshape)
+        z_1 = np.polyfit(times, phase_bins_1_reshape, 2)
+#        print 'z_1',z_1
+        p_1 = np.poly1d(z_1)
+        para_1 = p_1(times)
+        phase_bins_1_reshape_para = phase_bins_1_reshape - para_1
+#        print 'phase_bins_1_reshape_para', phase_bins_1_reshape_para
+        phase_bins_1_rebin_rms_para[ii] = np.std(phase_bins_1_reshape_para)
+
+        z_2 = np.polyfit(times, phase_bins_2_reshape, 2)
+        p_2 = np.poly1d(z_2)
+        para_2 = p_2(times)
+        phase_bins_2_reshape_para = phase_bins_2_reshape - para_2
+        phase_bins_2_rebin_rms_para[ii] = np.std(phase_bins_2_reshape_para)
+
+    print 'phase_bins_1_rebin_rms', np.amax(phase_bins_1_rebin_rms)
+    print 'phase_bins_1_rebin_rms_para', np.amax(phase_bins_1_rebin_rms_para)
+    print 'phase_bins_2_rebin_rms', np.amax(phase_bins_2_rebin_rms)
+    print 'phase_bins_2_rebin_rms_para', np.amax(phase_bins_2_rebin_rms_para)
+
+
+    max_value = np.amax(np.concatenate((phase_bins_1_rebin_rms, phase_bins_1_rebin_rms_para, phase_bins_2_rebin_rms, phase_bins_2_rebin_rms_para)))
+
+    markersize = 4.0
+    fontsize = 16
+
+    plt.close('all')
+    x_axis = rebin_time
+    plt.loglog(tt, 1/np.sqrt(tt)*(np.sqrt(0.125)*max_value), 'k', label='1 / sqrt(t), normalized')
+    plt.loglog(x_axis, phase_bins_1_rebin_rms, 'ro', markersize=markersize, label='1 mode, before subtracting para')
+    plt.loglog(x_axis, phase_bins_1_rebin_rms, 'r')
+    plt.loglog(x_axis, phase_bins_2_rebin_rms, 'bs', markersize=markersize, label='2 modes, before subtracting para')
+    plt.loglog(x_axis, phase_bins_2_rebin_rms, 'b--')
+    plt.loglog(x_axis, phase_bins_1_rebin_rms_para, 'g^', markersize=markersize, label='1 mode, after subtracting para')
+    plt.loglog(x_axis, phase_bins_1_rebin_rms_para, 'g:')
+    plt.loglog(x_axis, phase_bins_2_rebin_rms_para, 'y*', markersize=markersize, label='2 modes, after subtracting para')
+    plt.loglog(x_axis, phase_bins_2_rebin_rms_para, 'y-.')
+
+
+    plt.xlabel('Int. time for each rebinning profile (sec)', fontsize=fontsize)
+    plt.ylabel('RMS for rebinning phase measurements (micro-sec)', fontsize=fontsize)
+    plt.tick_params(axis='both', which='major', labelsize=fontsize)
+    plt.legend(loc='upper right', fontsize=fontsize-4)
+    plt.xlim([0,65])
+    plt.title('Double the thermal noise.')
+    plot_name = 'rebinning_rms_2tn.png'
+    plt.savefig(plot_name, bbox_inches='tight', dpi=300)
+
 
 
 def reconstruct_V(V, V0_raw, V1_raw):
@@ -597,7 +888,7 @@ def phase_fitting(profiles, V, patterns, tint_stack):
 
         if True:
             '''save the fitting amp and bin as [bin, amps, bin_err, amp_errs]'''
-            npy_lik_file = patterns+'fit_nodes_'+str(NMODES)+'_tint_'+str(tint_stack)+'_.npy'
+            npy_lik_file = patterns+'fit_nodes_'+str(NMODES)+'_tint_'+str(tint_stack)+'_2tn.npy'
             if os.path.exists(npy_lik_file):
                 sequence = np.load(npy_lik_file)
                 np.save(npy_lik_file, np.vstack((sequence, phase_amp_bin_lik)))
@@ -691,11 +982,13 @@ def svd(file):
 
     U, s, V = np.linalg.svd(time_matrix, full_matrices=False)
 
+    UT = U.T
+
     if np.abs(np.amax(V[0])) < np.abs(np.amin(V[0])):
         V[0] = -V[0]
 
     if True:
-        np.save('U_.npy', U)
+        np.save('UT_.npy', UT)
         np.save('s_.npy', s)
         np.save('V_.npy', V)
 
@@ -723,11 +1016,13 @@ def plot_svd(file, plot_name):
 
     U, s, V= svd(file)
 
+    UT = U.T
+
     V_name = plot_name + '_V.npy'
     np.save(V_name, V)
  
     print 'len(V[0])', len(V[0])
-    print 'U.shape', U.shape
+    print 'UT.shape', UT.shape
     print 's.shape', s.shape
     print 'V.shape', V.shape
 
@@ -768,17 +1063,17 @@ def plot_svd(file, plot_name):
     plt.close('all')
     plt.figure()
     n_step = -0.3
-    x_range = np.arange(0 , len(U[0]))
+    x_range = np.arange(0 , len(UT[0]))
     color = ['r', 'g', 'b', 'y', 'c', '0.0', '0.2', '0.4', '0.6', '0.8']
 #    color = ['r', 'g', 'b']
     for ii in xrange(len(color)):
-        plt.plot(x_range, np.roll(U[ii] + ii *n_step, 0), color[ii], linewidth=1.0)
-    plt.xlim((0, len(U[0])))
+        plt.plot(x_range, np.roll(UT[ii] + ii *n_step, 0), color[ii], linewidth=1.0)
+    plt.xlim((0, len(UT[0])))
 #    plt.xlabel('Phase', fontsize=fontsize)
     plt.ylabel('U values', fontsize=fontsize)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
-    plot_name_U = plot_name + '_U.png'
-    plt.savefig(plot_name_U, bbox_inches='tight', dpi=300)
+    plot_name_UT = plot_name + '_UT.png'
+    plt.savefig(plot_name_UT, bbox_inches='tight', dpi=300)
 
 
 def plot_rebin_ut(xmin, xmax):

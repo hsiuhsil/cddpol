@@ -36,10 +36,10 @@ def TFmt(t):
 
 def MakeFileList(rank, size):
     import itertools
-    epochs = ['b','c']
-#    nums = [3]
+    epochs = ['a']
+    nums = [7]
 #    nums = [3, 4, 6, 7, 9, 10, 12, 13]
-    nums = [15, 16, 18, 19, 21, 22]
+#    nums = [15, 16, 18, 19, 21, 22]
 #    epochs = ['a', 'b', 'c', 'd']
 #    nums = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
     evn_gen = itertools.product(epochs, nums)
@@ -130,7 +130,7 @@ for fi, evn_file in enumerate(evn_files):
     flstr = "{0:02d}/{1:02d}".format(fi+1, len(evn_files))
     ar_data = "{0}/{1}".format(in_folder, evn_file)
     offset, t00 = FindOffset(ar_data, SR)
-    output_file = '{0}/{1}_{2}g_{3}b_{4}+{5}s_'.format(out_folder, evn_file, ngate, band, t00, T*block_length)
+    output_file = '{0}/test_{1}_{2}g_{3}b_{4}+{5}s_'.format(out_folder, evn_file, ngate, band, t00, T*block_length)
     print('output_file is', output_file)
 #    zz = np.zeros(( int(T * 8 / fold_time_length), ngate * 2))
     zz = np.zeros(ngate * 2)
@@ -139,7 +139,12 @@ for fi, evn_file in enumerate(evn_files):
     files = {}
     keys = ['t00', 'fold_data_int_'+str(fold_time_length)+'_band_'+str(band)]
     if os.path.isfile(output_file) == True:
-        files[output_file] = h5py.File(output_file + 'h5',"r+")
+#        files[output_file] = h5py.File(output_file + 'h5',"r+")
+        this_file = h5py.File(output_file + 'h5',"a")
+        dataset_name == 'fold_data_int_'+str(fold_time_length)+'_band_'+str(band)
+        if dataset_name in this_file == False:
+            first_data = zz
+            this_file.create_dataset(dataset_name, (0,) + first_data.shape, maxshape = (None,) +first_data.shape, dtype=first_data.dtype, chunks=True)
     else:
         this_file = h5py.File(output_file + 'h5',"w")
         for dataset_name in keys:
@@ -152,7 +157,7 @@ for fi, evn_file in enumerate(evn_files):
             elif dataset_name == 'fold_data_int_'+str(fold_time_length)+'_band_'+str(band):
                 first_data = zz
                 this_file.create_dataset(dataset_name, (0,) + first_data.shape, maxshape = (None,) +first_data.shape, dtype=first_data.dtype, chunks=True)
-            files[output_file] = this_file
+    files[output_file] = this_file
 
 
     print("[{0}: {1}] ({2}: {3}) Begin processing, Output at {4}".format(mpstr, TFmt(main_t0), flstr, evn_file, output_file))
