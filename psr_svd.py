@@ -11,6 +11,9 @@ from baseband import mark4
 from pulsar.predictor import Polyco
 import astropy.units as u
 import math
+import random
+from random import gauss
+random.seed(3)
 from scipy import fftpack, optimize, interpolate, linalg, integrate
 from mpi4py import MPI
 
@@ -120,7 +123,17 @@ def main():
 #        profile = B_data_stack
 #        profile = fold_data
         this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
-        profile = this_file['fold_data_int_0.125_band_0'][:2400,:] #5mins dataset
+        profile_raw = this_file['fold_data_int_0.125_band_0'][:2400,:] #5mins dataset
+
+        # introduce Gaussian random noise. 
+        profile = np.zeros((profile_raw.shape))
+        for ii in xrange(profile.shape[0]):
+            pro_raw_L = profile_raw[ii,0:profile.shape[1]/2]
+            pro_L = pro_raw_L + np.array([random.gauss(np.mean(pro_raw_L), np.std(pro_raw_L)) for i in range(profile.shape[1]/2)])
+            pro_raw_R = profile_raw[ii,profile.shape[1]/2:]
+            pro_R = pro_raw_R + np.array([random.gauss(np.mean(pro_raw_R), np.std(pro_raw_R)) for i in range(profile.shape[1]/2)])
+            profile[ii] = np.concatenate((pro_L, pro_R))
+        np.save('profiles_random_noise.npy', profile) 
 
         # remove signal modes, and reconstruct noise profiles.
         U, s, V = svd(profile)
@@ -128,9 +141,7 @@ def main():
         V1_raw = copy.deepcopy(V[1])
         V[0] = 0
         V[1] = 0
-        '''double the noise'''
-        noise_profiles_raw = reconstruct_profile(U,s,V)
-        noise_profiles = 2*noise_profiles_raw
+        noise_profiles = reconstruct_profile(U,s,V)
         print 'noise_profiles.shape', noise_profiles.shape
 
         # get an estimate of the noise level, for each the R and L polarizations.
@@ -153,48 +164,50 @@ def main():
         print 'finish profile_norm_var'
         # SVD on the normalized variance profile.
         U, s, V = svd(profile_norm_var)
-        plot_svd(profile_norm_var, 'profile_norm_var_2tn')
+        plot_svd(profile_norm_var, 'profile_norm_var_2tn_random')
         print 'finish SVD'
         check_noise(profile_norm_var)      
  
     if False:
         V = np.load('V_.npy')
         V_recon = V.reshape(V.shape[0], 2, V.shape[1]/2)
- 
-        for f in xrange(len(glob.glob(time_str_patterns))):
-            if f % size == rank:
-                ff = sorted(glob.glob(time_str_patterns))[f]
-                print('ff',ff)
-                patterns = str(ff[47:63])
-                print 'patterns', patterns
-                this_file = h5py.File(ff,'r')
+        print 'done V_recon'
+        profile = np.load('profiles_random_noise.npy')
+        print 'profile.shape', profile.shape 
+#        for f in xrange(len(glob.glob(time_str_patterns))):
+#            if f % size == rank:
+#                ff = sorted(glob.glob(time_str_patterns))[f]
+#                print('ff',ff)
+#                patterns = str(ff[47:63])
+#                print 'patterns', patterns
+#                this_file = h5py.File(ff,'r')
 #                this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/2tn_gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
-                profile_raw = this_file['fold_data_int_0.125_band_0'][:2400,:] 
-                print 'this_file', this_file, rank
+#                profile_raw = this_file['fold_data_int_0.125_band_0'][:2400,:] 
+#                print 'this_file', this_file, rank
 #                profile = this_file['fold_data_int_'+str(paras.tint)+'_band_'+str(band)]
-                '''double the noise'''
-                if True:
-                    profile = np.zeros(profile_raw.shape)
-                    for ii in xrange(profile_raw.shape[0]):
-                        profile[ii] = profile_raw[ii] + noise_profiles_raw[ii]
-                    print 'finish adding the noise to the profile.'
-                else:
-                    profile = profile_raw
+#                '''double the noise'''
+#                if True:
+#                    profile = np.zeros(profile_raw.shape)
+#                    for ii in xrange(profile_raw.shape[0]):
+#                        profile[ii] = profile_raw[ii] + noise_profiles_raw[ii]
+#                    print 'finish adding the noise to the profile.'
+#                else:
+#                    profile = profile_raw
 
 
-                '''stack profiles'''
-                if False:
-                    profile = stack(profile, paras.prof_stack)
-                    tint_stack = paras.tint*paras.prof_stack
-                else:
-                    tint_stack = paras.tint
+        '''stack profiles'''
+        if False:
+            profile = stack(profile, paras.prof_stack)
+            tint_stack = paras.tint*paras.prof_stack
+        else:
+            tint_stack = paras.tint
 
-                '''reshape profiles of L and R into periodic signals (pulse number, L/R, phases)'''
-                profile_npy = np.zeros(profile.shape)
-                profile_npy[:] = profile[:]
-                profile_npy = profile_npy.reshape(profile_npy.shape[0], 2, profile_npy.shape[1]/2)   
-                print 'profile_npy.shape', profile_npy.shape
-                phase_fitting(profile_npy, V_recon, patterns, tint_stack)
+        '''reshape profiles of L and R into periodic signals (pulse number, L/R, phases)'''
+        profile_npy = np.zeros(profile.shape)
+        profile_npy[:] = profile[:]
+        profile_npy = profile_npy.reshape(profile_npy.shape[0], 2, profile_npy.shape[1]/2)   
+        print 'profile_npy.shape', profile_npy.shape
+        mpi_phase_fitting(profile_npy, V_recon, 'gp052a_07_', tint_stack)
 
 
     if False:
@@ -582,8 +595,8 @@ def plot_ut_phase_correlation():
 def plot_rms_binning():
 
     bin_size = P0 / ngate * 10**6 #microsecond
-    phase_file_1 = np.load('gp052a_ar_no0007fit_nodes_1_tint_0.125_2tn.npy')
-    phase_file_2 = np.load('gp052a_ar_no0007fit_nodes_2_tint_0.125_2tn.npy')
+    phase_file_1 = np.load('gp052a_07_fit_nodes_1_tint_0.125_2tn_random.npy')
+    phase_file_2 = np.load('gp052a_07_fit_nodes_2_tint_0.125_2tn_random.npy')
     phase_bins_1 = phase_file_1[:2400, 0] * bin_size # change unit from phase bins to microseconds
     phase_bins_2 = phase_file_2[:2400, 0] * bin_size
 
@@ -653,7 +666,7 @@ def plot_rms_binning():
     plt.legend(loc='upper right', fontsize=fontsize-4)
     plt.xlim([0,65])
     plt.title('Double the thermal noise.')
-    plot_name = 'rebinning_rms_2tn.png'
+    plot_name = 'rebinning_rms_2tn_random.png'
     plt.savefig(plot_name, bbox_inches='tight', dpi=300)
 
 
@@ -736,7 +749,20 @@ def check_noise(profile):
     plt.savefig('variance_rl.png', bbox_inches='tight', dpi=300)
 
 
-def phase_fitting(profiles, V, patterns, tint_stack):
+def mpi_phase_fitting(profiles, V, patterns, tint_stack):
+
+    '''save the fitting amp and bin as [bin, amps, bin_err, amp_errs]'''
+    npy_lik_file = np.zeros((len(profiles), (1+NMODES)*2))
+    npy_lik_name = patterns+'fit_nodes_'+str(NMODES)+'_tint_'+str(tint_stack)+'_2tn_random.npy'
+
+    for ii, profile in list(enumerate(profiles)):
+        if ii % size == rank:
+            phase_amp_bin_lik = phase_fitting(profile, V, patterns, tint_stack, ii)
+            npy_lik_file[ii] = phase_amp_bin_lik
+
+    np.save(npy_lik_name, npy_lik_file)
+     
+def phase_fitting(profile, V, patterns, tint_stack, ii):
     profile_numbers = []
     profile_numbers_lik = []
     phase_model = []
@@ -746,15 +772,14 @@ def phase_fitting(profiles, V, patterns, tint_stack):
     phase_errors_lik = []
 
 #    nprof = 10
-    nprof = len(profiles)
-    profiles = profiles[:nprof]
+#    nprof = len(profiles)
+#    profiles = profiles[:nprof]
 
     V_fft = fftpack.fft(V, axis=2)
     V_fft_L = fftpack.fft(V[:,0,:], axis=1)
     V_fft_R = fftpack.fft(V[:,1,:], axis=1)
 
-    for ii, profile in list(enumerate(profiles)):
-        print "Profile: ", ii
+    if True:
         profile_numbers.append(ii)
         profile_L = profile[0]
         profile_R = profile[1]
@@ -885,16 +910,8 @@ def phase_fitting(profiles, V, patterns, tint_stack):
         else:
             phase_amp_bin_lik = np.concatenate((pars_fit[:], errs[:]))
 
-
-        if True:
-            '''save the fitting amp and bin as [bin, amps, bin_err, amp_errs]'''
-            npy_lik_file = patterns+'fit_nodes_'+str(NMODES)+'_tint_'+str(tint_stack)+'_2tn.npy'
-            if os.path.exists(npy_lik_file):
-                sequence = np.load(npy_lik_file)
-                np.save(npy_lik_file, np.vstack((sequence, phase_amp_bin_lik)))
-            else:
-                np.save(npy_lik_file, phase_amp_bin_lik)
-
+        return phase_amp_bin_lik
+        
 
 def stack(profile, profile_stack):
     nprof = len(profile)
