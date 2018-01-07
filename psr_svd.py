@@ -67,15 +67,7 @@ print 'PEPOCH', PEPOCH
 band = int(sys.argv[2])
 print band
 
-def main():    
-
-#    plot_ut_phase_time_streams()
-    plot_rms_binning()
-#    plot_ut_phase_correlation()
-#    TOAs_debug()
-#    generate_TOAs()
-#    generate_tim_file()
-
+def not_main():
     if False: #combine all folding data in one single array.
 
         single_fold_shape = (int(8*paras.T/paras.tint), NPHASEBIN*2)
@@ -118,98 +110,6 @@ def main():
 #        svd(B_data_rebin, rebin_pulse)
         plot_svd(B_data_rebin, rebin_pulse, filename)
 
-    if False: 
-        '''Reconstruct V modes'''
-#        profile = B_data_stack
-#        profile = fold_data
-        this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
-        profile_raw = this_file['fold_data_int_0.125_band_0'][:2400,:] #5mins dataset
-
-        # introduce Gaussian random noise. 
-        profile = np.zeros((profile_raw.shape))
-        for ii in xrange(profile.shape[0]):
-            pro_raw_L = profile_raw[ii,0:profile.shape[1]/2]
-            pro_L = pro_raw_L + np.array([random.gauss(np.mean(pro_raw_L), np.std(pro_raw_L)) for i in range(profile.shape[1]/2)])
-            pro_raw_R = profile_raw[ii,profile.shape[1]/2:]
-            pro_R = pro_raw_R + np.array([random.gauss(np.mean(pro_raw_R), np.std(pro_raw_R)) for i in range(profile.shape[1]/2)])
-            profile[ii] = np.concatenate((pro_L, pro_R))
-        np.save('profiles_random_noise.npy', profile) 
-
-        # remove signal modes, and reconstruct noise profiles.
-        U, s, V = svd(profile)
-        V0_raw = copy.deepcopy(V[0])
-        V1_raw = copy.deepcopy(V[1])
-        V[0] = 0
-        V[1] = 0
-        noise_profiles = reconstruct_profile(U,s,V)
-        print 'noise_profiles.shape', noise_profiles.shape
-
-        # get an estimate of the noise level, for each the R and L polarizations.
-        noise_var_L = np.mean(np.var(noise_profiles[:, 0:noise_profiles.shape[1]/2],axis=1))
-        noise_var_R = np.mean(np.var(noise_profiles[:, noise_profiles.shape[1]/2:noise_profiles.shape[1]],axis=1))
-
-        # transform origin profiles with unit variance.
-        profile_norm_var_L = np.zeros((profile.shape[0], profile.shape[1]/2))
-        profile_norm_var_R = np.zeros((profile.shape[0], profile.shape[1]/2))
-
-        for ii in xrange(profile.shape[0]):
-            profile_norm_var_L[ii] = norm_variance_profile(profile[ii, 0:profile.shape[1]/2], noise_var_L)
-            profile_norm_var_R[ii] = norm_variance_profile(profile[ii, profile.shape[1]/2:profile.shape[1]], noise_var_R)
-        profile_norm_var = np.concatenate((profile_norm_var_L, profile_norm_var_R), axis=1)
-
-        profile_norm_var = profile_norm_var[:, :]
-        print 'profile_norm_var.shape', profile_norm_var.shape
-        plot_spec_dedisperse(profile_norm_var)
-
-        print 'finish profile_norm_var'
-        # SVD on the normalized variance profile.
-        U, s, V = svd(profile_norm_var)
-        plot_svd(profile_norm_var, 'profile_norm_var_2tn_random')
-        print 'finish SVD'
-        check_noise(profile_norm_var)      
- 
-    if False:
-        V = np.load('V_.npy')
-        V_recon = V.reshape(V.shape[0], 2, V.shape[1]/2)
-        print 'done V_recon'
-        profile = np.load('profiles_random_noise.npy')
-        print 'profile.shape', profile.shape 
-#        for f in xrange(len(glob.glob(time_str_patterns))):
-#            if f % size == rank:
-#                ff = sorted(glob.glob(time_str_patterns))[f]
-#                print('ff',ff)
-#                patterns = str(ff[47:63])
-#                print 'patterns', patterns
-#                this_file = h5py.File(ff,'r')
-#                this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/2tn_gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
-#                profile_raw = this_file['fold_data_int_0.125_band_0'][:2400,:] 
-#                print 'this_file', this_file, rank
-#                profile = this_file['fold_data_int_'+str(paras.tint)+'_band_'+str(band)]
-#                '''double the noise'''
-#                if True:
-#                    profile = np.zeros(profile_raw.shape)
-#                    for ii in xrange(profile_raw.shape[0]):
-#                        profile[ii] = profile_raw[ii] + noise_profiles_raw[ii]
-#                    print 'finish adding the noise to the profile.'
-#                else:
-#                    profile = profile_raw
-
-
-        '''stack profiles'''
-        if False:
-            profile = stack(profile, paras.prof_stack)
-            tint_stack = paras.tint*paras.prof_stack
-        else:
-            tint_stack = paras.tint
-
-        '''reshape profiles of L and R into periodic signals (pulse number, L/R, phases)'''
-        profile_npy = np.zeros(profile.shape)
-        profile_npy[:] = profile[:]
-        profile_npy = profile_npy.reshape(profile_npy.shape[0], 2, profile_npy.shape[1]/2)   
-        print 'profile_npy.shape', profile_npy.shape
-        mpi_phase_fitting(profile_npy, V_recon, 'gp052a_07_', tint_stack)
-
-
     if False:
         lists_amps = []
         lists_times = []
@@ -242,7 +142,108 @@ def main():
 
         plot_phase_lik(times, phases_amps_1[:len(times)], tint_stack, 'phase_lik_nodes_1_tint_'+str(tint_stack)+'sec.png')
         plot_phase_lik(times, phases_amps_2[:len(times)], tint_stack, 'phase_lik_nodes_2_tint_30.0sec.png')
-        
+
+def main():
+
+#    plot_ut_phase_time_streams()
+#    plot_rms_binning()
+#    plot_ut_phase_correlation()
+#    TOAs_debug()
+#    generate_TOAs()
+#    generate_tim_file()
+
+    if True: 
+        '''Reconstruct V modes'''
+
+        this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
+        profile_raw = this_file['fold_data_int_0.125_band_0'][:2400,:] #5mins dataset
+
+        # introduce Gaussian random noise. 
+#        profile_random = np.zeros((profile_raw.shape))
+#        for ii in xrange(profile_random.shape[0]):
+#            pro_raw_L = profile_raw[ii,0:profile_random.shape[1]/2]
+#            pro_L = pro_raw_L + np.array([random.gauss(np.mean(pro_raw_L), np.std(pro_raw_L)) for i in range(profile_random.shape[1]/2)])
+#            pro_raw_R = profile_raw[ii,profile_random.shape[1]/2:]
+#            pro_R = pro_raw_R + np.array([random.gauss(np.mean(pro_raw_R), np.std(pro_raw_R)) for i in range(profile_random.shape[1]/2)])
+#            profile_random[ii] = np.concatenate((pro_L, pro_R))
+
+
+        # introduce the noise from SVD analysis. 
+        # remove signal modes, and reconstruct noise profiles.
+        U, s, V = svd(profile_raw)
+        V0_raw = copy.deepcopy(V[0])
+        V1_raw = copy.deepcopy(V[1])
+        V[0] = 0
+        V[1] = 0
+        noise_profiles_raw = reconstruct_profile(U,s,V)
+        print 'noise_profiles_raw.shape', noise_profiles_raw.shape
+        # transform noise_profiles_raw with a half period of each polarization to avoid the contribution of residuals    
+        profile_svd_noise = np.zeros((profile_raw.shape))
+        for ii in xrange(profile_svd_noise.shape[0]):
+            pro_raw_L = profile_raw[ii,0:profile_svd_noise.shape[1]/2]
+            pro_L = pro_raw_L + np.roll(noise_profiles_raw[ii,0:profile_svd_noise.shape[1]/2], ngate/2)
+            pro_raw_R = profile_raw[ii,profile_svd_noise.shape[1]/2:]
+            pro_R = pro_raw_R + np.roll(noise_profiles_raw[ii,profile_svd_noise.shape[1]/2:], ngate/2)
+            profile_svd_noise[ii] = np.concatenate((pro_L, pro_R))
+
+        # process profiles of raw, random noise, noise from svd
+        print 'process profiles of raw, random noise, noise from svd'
+        process_profiles(profile_raw, 'gp052a_07_raw_')
+        process_profiles(profile_random, 'gp052a_07_random_')
+        process_profiles(profile_svd_noise, 'gp052a_07_svdnoise_')
+
+
+def process_profiles(profile, pattern):
+        # remove signal modes, and reconstruct noise profiles.
+        U, s, V = svd(profile)
+        V0_raw = copy.deepcopy(V[0])
+        V1_raw = copy.deepcopy(V[1])
+        V[0] = 0
+        V[1] = 0
+        noise_profiles = reconstruct_profile(U,s,V)
+        print 'noise_profiles.shape', noise_profiles.shape
+
+        # get an estimate of the noise level, for each the R and L polarizations.
+        noise_var_L = np.mean(np.var(noise_profiles[:, 0:noise_profiles.shape[1]/2],axis=1))
+        noise_var_R = np.mean(np.var(noise_profiles[:, noise_profiles.shape[1]/2:noise_profiles.shape[1]],axis=1))
+
+        # transform origin profiles with unit variance.
+        profile_norm_var_L = np.zeros((profile.shape[0], profile.shape[1]/2))
+        profile_norm_var_R = np.zeros((profile.shape[0], profile.shape[1]/2))
+
+        for ii in xrange(profile.shape[0]):
+            profile_norm_var_L[ii] = norm_variance_profile(profile[ii, 0:profile.shape[1]/2], noise_var_L)
+            profile_norm_var_R[ii] = norm_variance_profile(profile[ii, profile.shape[1]/2:profile.shape[1]], noise_var_R)
+        profile_norm_var = np.concatenate((profile_norm_var_L, profile_norm_var_R), axis=1)
+
+        profile_norm_var = profile_norm_var[:, :]
+        print 'profile_norm_var.shape', profile_norm_var.shape
+        plot_spec_dedisperse(profile_norm_var)
+
+        print 'finish profile_norm_var'
+        # SVD on the normalized variance profile.
+        U, s, V = svd(profile_norm_var)
+        plot_name_1 = pattern + '_norm_var_lik'
+        plot_svd(profile_norm_var, plot_name_1)
+        print 'finish SVD'
+        check_noise(profile_norm_var)      
+        V_recon = V.reshape(V.shape[0], 2, V.shape[1]/2)
+        print 'done V_recon'
+
+        '''stack profiles'''
+        if False:
+            profile = stack(profile, paras.prof_stack)
+            tint_stack = paras.tint*paras.prof_stack
+        else:
+            tint_stack = paras.tint
+
+        '''reshape profiles of L and R into periodic signals (pulse number, L/R, phases)'''
+        profile_npy = np.zeros(profile.shape)
+        profile_npy[:] = profile[:]
+        profile_npy = profile_npy.reshape(profile_npy.shape[0], 2, profile_npy.shape[1]/2)   
+        print 'profile_npy.shape', profile_npy.shape
+        mpi_phase_fitting(profile_npy, V_recon, pattern, tint_stack)
+      
 
 def generate_tim_file():
 
@@ -595,8 +596,8 @@ def plot_ut_phase_correlation():
 def plot_rms_binning():
 
     bin_size = P0 / ngate * 10**6 #microsecond
-    phase_file_1 = np.load('gp052a_07_fit_nodes_1_tint_0.125_2tn_random.npy')
-    phase_file_2 = np.load('gp052a_07_fit_nodes_2_tint_0.125_2tn_random.npy')
+    phase_file_1 = np.load('gp052a_07_svdnoise_fit_nodes_1_tint_0.125.npy')
+    phase_file_2 = np.load('gp052a_07_svdnoise_fit_nodes_2_tint_0.125.npy')
     phase_bins_1 = phase_file_1[:2400, 0] * bin_size # change unit from phase bins to microseconds
     phase_bins_2 = phase_file_2[:2400, 0] * bin_size
 
@@ -663,10 +664,11 @@ def plot_rms_binning():
     plt.xlabel('Int. time for each rebinning profile (sec)', fontsize=fontsize)
     plt.ylabel('RMS for rebinning phase measurements (micro-sec)', fontsize=fontsize)
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
-    plt.legend(loc='upper right', fontsize=fontsize-4)
+    plt.legend(loc='lower left', fontsize=fontsize-4)
     plt.xlim([0,65])
-    plt.title('Double the thermal noise.')
-    plot_name = 'rebinning_rms_2tn_random.png'
+    title = 'Max RMS: '+str(np.round(max_value,3))+' (microsec)'
+    plt.title(title, fontsize=fontsize)
+    plot_name = 'rebinning_rms_svdnoise.png'
     plt.savefig(plot_name, bbox_inches='tight', dpi=300)
 
 
@@ -753,7 +755,7 @@ def mpi_phase_fitting(profiles, V, patterns, tint_stack):
 
     '''save the fitting amp and bin as [bin, amps, bin_err, amp_errs]'''
     npy_lik_file = np.zeros((len(profiles), (1+NMODES)*2))
-    npy_lik_name = patterns+'fit_nodes_'+str(NMODES)+'_tint_'+str(tint_stack)+'_2tn_random.npy'
+    npy_lik_name = patterns+'fit_nodes_'+str(NMODES)+'_tint_'+str(tint_stack)+'.npy'
 
     for ii, profile in list(enumerate(profiles)):
         if ii % size == rank:
@@ -831,11 +833,11 @@ def phase_fitting(profile, V, patterns, tint_stack, ii):
         plot_phase_fft(pick_harmonics(profile_fft_R), model_fft_R, ii, patterns+'fit_R_')
 #        plot_phase_ifft(pars_fit, profile_R, V_fft_R, ii, 'phase_fit_R_')
 
-        if False:
+        if True:
             # Fix phase at set values, then fit for amplitudes. Then integrate
             # the likelihood over the parameters space to get mean and std of
             # phase.
-            phase_diff_samples = np.arange(-50, 50, 0.3) * errs[0]
+            phase_diff_samples = np.arange(-20, 20, 0.15) * errs[0]
             chi2_samples = []
             for p in phase_diff_samples:
                 this_phase = p + pars_init[0]
@@ -877,11 +879,11 @@ def phase_fitting(profile, V, patterns, tint_stack, ii):
             phase_diff_samples = np.array(phase_diff_samples)
             chi2_samples = np.array(chi2_samples, dtype=np.float64)
             chi2_samples -= chi2_samples_const # since chi2_samples are too large
-            print 'chi2_samples', chi2_samples
+#            print 'chi2_samples', chi2_samples
             while np.amax(chi2_samples) > 1400:
                 chi2_samples -= 50
-            print 'np.amax(chi2_samples)', np.amax(chi2_samples)
-            print 'np.amin(chi2_samples)', np.amin(chi2_samples)
+#            print 'np.amax(chi2_samples)', np.amax(chi2_samples)
+#            print 'np.amin(chi2_samples)', np.amin(chi2_samples)
 
             if False:
                 #Plot of chi-squared (ln likelihood) function.
