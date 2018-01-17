@@ -15,6 +15,7 @@ import random
 from random import gauss
 random.seed(3)
 from scipy import fftpack, optimize, interpolate, linalg, integrate
+from scipy.optimize import curve_fit
 from mpi4py import MPI
 
 import copy
@@ -111,6 +112,90 @@ def not_main():
         plot_svd(B_data_rebin, rebin_pulse, filename)
 
     if False:
+        t_end = 300 #sec
+        print 't_end: ', t_end
+        tint_stack = paras.tint*paras.prof_stack
+        times = np.arange(0, t_end, tint_stack)
+        phases_amps_1 = np.load('gp052a_ar_no0007fit_nodes_1_tint_30.0.npy')
+        phases_amps_2 = np.load('gp052a_ar_no0007fit_nodes_2_tint_30.0.npy')
+
+        plot_phase_lik(times, phases_amps_1[:len(times)], tint_stack, 'phase_lik_nodes_1_tint_'+str(tint_stack)+'sec.png')
+        plot_phase_lik(times, phases_amps_2[:len(times)], tint_stack, 'phase_lik_nodes_2_tint_30.0sec.png')
+
+
+def main():
+    if True: 
+        '''Reconstruct V modes'''
+
+#        this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
+#        profile_raw = this_file['fold_data_int_0.125_band_0'][:2400,:] #5mins dataset
+
+        this_file1 = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/gp052a_ar_no0006_512g_0b_56821.2473148+536s_h5','r')
+        this_file2 = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
+        t0_file1 = this_file1['t00'][0] 
+        t0_file2 = this_file2['t00'][0]
+
+        profile_raw = np.concatenate((this_file1['fold_data_int_0.125_band_0'],
+                                      this_file2['fold_data_int_0.125_band_0']), axis=0)
+
+        if True: # subtract the parabola from the curve of TOAs
+            nprof = 24
+            phase_bins_raw = np.load('gp052a_06to07_raw_lik_modes_1_tint_0.5.npy')[:nprof,0]
+
+            # set the earlist TOA to be offset and combine all middle time of chunks.
+            chunk_len = tint * prof_stack # the length of each chunk
+            times = np.arange(0 + chunk_len/2, 536, chunk_len)[:nprof] # the all chunks of each data
+            total_times = np.concatenate((times, times + 86400*(t0_file2-t0_file1)), axis=0)[:nprof]
+
+            # fit a parabola for the TOAs distribution
+            popt, pcov = curve_fit(parabola, total_times, phase_bins_raw)
+            print 'popt', popt
+            print 'pcov', pcov
+
+            # move the raw profiles for removing the parabola effect.               
+            para_phase_bins = parabola(total_times, *popt)
+            profile_raw = mpi_phase_move(profile_raw[:nprof], np.array([128.0]*nprof))
+#            profile_raw = mpi_phase_move(profile_raw[:nprof], para_phase_bins)    
+            print 'profile_raw.shape', profile_raw.shape
+
+        # process raw profiles
+        print 'process raw profiles'
+        process_profiles(profile_raw, 'gp052a_06to07_move_')
+
+
+        # introduce Gaussian random noise. 
+#        profile_random = np.zeros((profile_raw.shape))
+#        for ii in xrange(profile_random.shape[0]):
+#            pro_raw_L = profile_raw[ii,0:profile_random.shape[1]/2]
+#            pro_L = pro_raw_L + np.array([random.gauss(np.mean(pro_raw_L), np.std(pro_raw_L)) for i in range(profile_random.shape[1]/2)])
+#            pro_raw_R = profile_raw[ii,profile_random.shape[1]/2:]
+#            pro_R = pro_raw_R + np.array([random.gauss(np.mean(pro_raw_R), np.std(pro_raw_R)) for i in range(profile_random.shape[1]/2)])
+#            profile_random[ii] = np.concatenate((pro_L, pro_R))
+
+        # introduce the noise from SVD analysis. 
+        # remove signal modes, and reconstruct noise profiles.
+#        U, s, V = svd(profile_raw)
+#        V0_raw = copy.deepcopy(V[0])
+#        V1_raw = copy.deepcopy(V[1])
+#        V[0] = 0
+#        V[1] = 0
+#        noise_profiles_raw = reconstruct_profile(U,s,V)
+#        print 'noise_profiles_raw.shape', noise_profiles_raw.shape
+        # transform noise_profiles_raw with a half period of each polarization to avoid the contribution of residuals    
+#        profile_svd_noise = np.zeros((profile_raw.shape))
+#        for ii in xrange(profile_svd_noise.shape[0]):
+#            pro_raw_L = profile_raw[ii,0:profile_svd_noise.shape[1]/2]
+#            pro_L = pro_raw_L + np.roll(noise_profiles_raw[ii,0:profile_svd_noise.shape[1]/2], ngate/2)
+#            pro_raw_R = profile_raw[ii,profile_svd_noise.shape[1]/2:]
+#            pro_R = pro_raw_R + np.roll(noise_profiles_raw[ii,profile_svd_noise.shape[1]/2:], ngate/2)
+#            profile_svd_noise[ii] = np.concatenate((pro_L, pro_R))
+
+        # process profiles of raw, random noise, noise from svd
+#        process_profiles(profile_random, 'gp052a_07_random_')
+#        process_profiles(profile_svd_noise, 'gp052a_07_svdnoise_')
+
+    if False:
+        '''Gather measurements of TOAs and times'''
         lists_amps = []
         lists_times = []
         for ii in xrange(len(glob.glob(phase_amp_files))):
@@ -129,73 +214,12 @@ def not_main():
         print 'times.shape', times.shape
         print 'finished combining phases_amps and times data'
 
-        plot_phase_lik(times, phases_amps, 'phase_lik.png')
-        plot_fit_amps(times, phases_amps, 'amp_ratios.png')
-
-    if False:
-        t_end = 300 #sec
-        print 't_end: ', t_end
-        tint_stack = paras.tint*paras.prof_stack
-        times = np.arange(0, t_end, tint_stack)
-        phases_amps_1 = np.load('gp052a_ar_no0007fit_nodes_1_tint_30.0.npy')
-        phases_amps_2 = np.load('gp052a_ar_no0007fit_nodes_2_tint_30.0.npy')
-
-        plot_phase_lik(times, phases_amps_1[:len(times)], tint_stack, 'phase_lik_nodes_1_tint_'+str(tint_stack)+'sec.png')
-        plot_phase_lik(times, phases_amps_2[:len(times)], tint_stack, 'phase_lik_nodes_2_tint_30.0sec.png')
-
-def main():
-
-#    plot_ut_phase_time_streams()
-    plot_rms_binning()
-#    plot_ut_phase_correlation()
-#    TOAs_debug()
-#    generate_TOAs()
-#    generate_tim_file()
-
-    if False: 
-        '''Reconstruct V modes'''
-
-        this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
-        profile_raw = this_file['fold_data_int_0.125_band_0'][:2400,:] #5mins dataset
-
-        # introduce Gaussian random noise. 
-        profile_random = np.zeros((profile_raw.shape))
-        for ii in xrange(profile_random.shape[0]):
-            pro_raw_L = profile_raw[ii,0:profile_random.shape[1]/2]
-            pro_L = pro_raw_L + np.array([random.gauss(np.mean(pro_raw_L), np.std(pro_raw_L)) for i in range(profile_random.shape[1]/2)])
-            pro_raw_R = profile_raw[ii,profile_random.shape[1]/2:]
-            pro_R = pro_raw_R + np.array([random.gauss(np.mean(pro_raw_R), np.std(pro_raw_R)) for i in range(profile_random.shape[1]/2)])
-            profile_random[ii] = np.concatenate((pro_L, pro_R))
-
-
-        # introduce the noise from SVD analysis. 
-        # remove signal modes, and reconstruct noise profiles.
-        U, s, V = svd(profile_raw)
-        V0_raw = copy.deepcopy(V[0])
-        V1_raw = copy.deepcopy(V[1])
-        V[0] = 0
-        V[1] = 0
-        noise_profiles_raw = reconstruct_profile(U,s,V)
-        print 'noise_profiles_raw.shape', noise_profiles_raw.shape
-        # transform noise_profiles_raw with a half period of each polarization to avoid the contribution of residuals    
-        profile_svd_noise = np.zeros((profile_raw.shape))
-        for ii in xrange(profile_svd_noise.shape[0]):
-            pro_raw_L = profile_raw[ii,0:profile_svd_noise.shape[1]/2]
-            pro_L = pro_raw_L + np.roll(noise_profiles_raw[ii,0:profile_svd_noise.shape[1]/2], ngate/2)
-            pro_raw_R = profile_raw[ii,profile_svd_noise.shape[1]/2:]
-            pro_R = pro_raw_R + np.roll(noise_profiles_raw[ii,profile_svd_noise.shape[1]/2:], ngate/2)
-            profile_svd_noise[ii] = np.concatenate((pro_L, pro_R))
-
-        # process profiles of raw, random noise, noise from svd
-        print 'process profiles of raw, random noise, noise from svd'
-        process_profiles(profile_raw, 'gp052a_07_raw_')
-        process_profiles(profile_random, 'gp052a_07_random_')
-#        process_profiles(profile_svd_noise, 'gp052a_07_svdnoise_')
 
 
 def process_profiles(profile, pattern):
         # remove signal modes, and reconstruct noise profiles.
         U, s, V = svd(profile)
+        plot_svd(profile, 'origin_')
         V0_raw = copy.deepcopy(V[0])
         V1_raw = copy.deepcopy(V[1])
         V[0] = 0
@@ -243,7 +267,9 @@ def process_profiles(profile, pattern):
         profile_npy = profile_npy.reshape(profile_npy.shape[0], 2, profile_npy.shape[1]/2)   
         print 'profile_npy.shape', profile_npy.shape
         mpi_phase_fitting(profile_npy, V_recon, pattern, tint_stack)
-      
+
+def parabola(x, a, b, c):
+    return a*x**2 + b*x + c      
 
 def generate_tim_file():
 
@@ -454,6 +480,16 @@ def plot_fit_amps(times, phases_amps, plot_name):
     plt.ylim([-0.5,0.5])
     plt.savefig('zoom_'+plot_name, bbox_inches='tight', dpi=300)    
 
+def remove_para(times, phase_bins):
+
+    '''remove the parabola from the TOA distribution'''
+    z_stacked = np.polyfit(times, phase_bins, 2)
+    p_stacked = np.poly1d(z_stacked)
+    parabola_stacked = p_stacked(times)
+    phase_bins_para = phase_bins - parabola_stacked
+    
+    return phase_bins_para
+
 
 def plot_phase_lik(times, phases_amps, tint_stack, plot_name):
 
@@ -465,10 +501,8 @@ def plot_phase_lik(times, phases_amps, tint_stack, plot_name):
     phase_bins = npy_lik_file[:,0]
     phase_bin_errs = npy_lik_file[:,npy_lik_file.shape[1]/2]
 
-    z_stacked = np.polyfit(times, phase_bins, 2)
-    p_stacked = np.poly1d(z_stacked)
-    parabola_stacked = p_stacked(times)
-    phase_bins_para = phase_bins - parabola_stacked 
+    '''remove the parabola from the TOA'''
+    phase_bins_para = remove_para(times, phase_bins)
 
 
     '''rebinned the phase measurements'''
@@ -605,7 +639,8 @@ def plot_rms_binning():
     phase_bins_1 = phase_file_1[:2400, 0] * bin_size # change unit from phase bins to microseconds
     phase_bins_2 = phase_file_2[:2400, 0] * bin_size
 
-    rebin_factor = [1, 2, 4, 8, 16, 32, 60, 120, 240, 480]
+    rebin_factor = [1, 2, 4, 8, 16, 24, 32, 60, 120, 240, 480]
+    print 'rebin_factor', rebin_factor
     rebin_time = np.array(rebin_factor)*0.125
 
     tt = np.arange(0.125,60,1)
@@ -640,29 +675,29 @@ def plot_rms_binning():
         phase_bins_2_reshape_para = phase_bins_2_reshape - para_2
         phase_bins_2_rebin_rms_para[ii] = np.std(phase_bins_2_reshape_para)
 
-    print 'phase_bins_1_rebin_rms', np.amax(phase_bins_1_rebin_rms)
-    print 'phase_bins_1_rebin_rms_para', np.amax(phase_bins_1_rebin_rms_para)
-    print 'phase_bins_2_rebin_rms', np.amax(phase_bins_2_rebin_rms)
-    print 'phase_bins_2_rebin_rms_para', np.amax(phase_bins_2_rebin_rms_para)
+    print 'phase_bins_1_rebin_rms', phase_bins_1_rebin_rms
+    print 'phase_bins_1_rebin_rms_para', phase_bins_1_rebin_rms_para
+    print 'phase_bins_2_rebin_rms', phase_bins_2_rebin_rms
+    print 'phase_bins_2_rebin_rms_para', phase_bins_2_rebin_rms_para
 
     max_value = np.amax(np.concatenate((phase_bins_1_rebin_rms, phase_bins_1_rebin_rms_para, phase_bins_2_rebin_rms, phase_bins_2_rebin_rms_para)))
 
-    diff = np.amax(phase_bins_2_rebin_rms) - np.amax(phase_bins_1_rebin_rms)
-    diff_para = np.amax(phase_bins_2_rebin_rms_para) - np.amax(phase_bins_1_rebin_rms_para)
+    diff = np.amax(phase_bins_1_rebin_rms) - np.amax(phase_bins_2_rebin_rms)
+    diff_para = np.amax(phase_bins_1_rebin_rms_para) - np.amax(phase_bins_2_rebin_rms_para)
 
     markersize = 4.0
     fontsize = 16
 
     plt.close('all')
     x_axis = rebin_time
-    plt.loglog(tt, 1/np.sqrt(tt)*(np.sqrt(0.125)*max_value), 'k', label='1 / sqrt(t), normalized')
-    plt.loglog(x_axis, phase_bins_1_rebin_rms, 'ro', markersize=markersize, label='1 mode, before subtracting para, max: '+str(np.amax(np.round(phase_bins_1_rebin_rms,4))))
+    plt.loglog(tt, 1/np.sqrt(tt)*(np.sqrt(0.125)*max_value), 'k', label='1 / sqrt(t), normalized to the 1 mode')
+    plt.loglog(x_axis, phase_bins_1_rebin_rms, 'ro', markersize=markersize, label='1 mode, before subtracting para, max: '+str(np.amax(np.round(phase_bins_1_rebin_rms,4)))+'('+r'$\mu$'+'s)')
     plt.loglog(x_axis, phase_bins_1_rebin_rms, 'r')
-    plt.loglog(x_axis, phase_bins_2_rebin_rms, 'bs', markersize=markersize, label='2 modes, before subtracting para, max: '+str(np.amax(np.round(phase_bins_2_rebin_rms, 4))))
+    plt.loglog(x_axis, phase_bins_2_rebin_rms, 'bs', markersize=markersize, label='2 modes, before subtracting para, max: '+str(np.amax(np.round(phase_bins_2_rebin_rms, 4)))+'('+r'$\mu$'+'s)')
     plt.loglog(x_axis, phase_bins_2_rebin_rms, 'b--')
-    plt.loglog(x_axis, phase_bins_1_rebin_rms_para, 'g^', markersize=markersize, label='1 mode, after subtracting para, max: '+str(np.amax(np.round(phase_bins_1_rebin_rms_para, 4))))
+    plt.loglog(x_axis, phase_bins_1_rebin_rms_para, 'g^', markersize=markersize, label='1 mode, after subtracting para, max: '+str(np.amax(np.round(phase_bins_1_rebin_rms_para, 4)))+'('+r'$\mu$'+'s)')
     plt.loglog(x_axis, phase_bins_1_rebin_rms_para, 'g:')
-    plt.loglog(x_axis, phase_bins_2_rebin_rms_para, 'y*', markersize=markersize, label='2 modes, after subtracting para, max: '+str(np.amax(np.round(phase_bins_2_rebin_rms_para, 4))))
+    plt.loglog(x_axis, phase_bins_2_rebin_rms_para, 'y*', markersize=markersize, label='2 modes, after subtracting para, max: '+str(np.amax(np.round(phase_bins_2_rebin_rms_para, 4)))+'('+r'$\mu$'+'s)')
     plt.loglog(x_axis, phase_bins_2_rebin_rms_para, 'y-.')
 
 
@@ -672,7 +707,7 @@ def plot_rms_binning():
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
     plt.legend(loc='lower left', fontsize=fontsize-4)
     plt.xlim([0,65])
-    title = 'diff: '+str(np.round(diff,3))+', diff_para: '+str(np.round(diff_para,3))+'('+r'$\mu$'+'s)'
+    title = 'diff: '+str(np.round(diff,3))+'('+r'$\mu$'+'s), diff_para: '+str(np.round(diff_para,3))+'('+r'$\mu$'+'s)'
     plt.title(title, fontsize=fontsize-4)
     plot_name = 'rebinning_rms_random.png'
     plt.savefig(plot_name, bbox_inches='tight', dpi=300)
@@ -756,18 +791,64 @@ def check_noise(profile):
     plt.tick_params(axis='both', which='major', labelsize=fontsize)
     plt.savefig('variance_rl.png', bbox_inches='tight', dpi=300)
 
+def mpi_phase_move(profiles, para_phase_bins):
+
+    '''Scattering profiles to each rank, moving phases of  each profiles, and gathering the results to rank 0'''
+
+    # reshpae profiles into (pulse numbers, L/R pol, phase bins)
+    profiles = profiles.reshape(profiles.shape[0], 2, profiles.shape[1]/2)
+
+    if rank == 0:
+        mpi_profiles = np.split(profiles, size)
+        mpi_para_phase_bins = np.split(para_phase_bins, size)
+    else:
+        profiles = None        
+        mpi_profiles = None
+        mpi_para_phase_bins = None
+
+    mpi_profiles = comm.scatter(mpi_profiles, root=0)
+    mpi_para_phase_bins = comm.scatter(mpi_para_phase_bins, root=0)
+    profiles_nopara = profiles_phase_move(mpi_profiles, mpi_para_phase_bins)
+#    all_profiles_nopara = np.asarray(comm.allgather(profiles_nopara))
+    all_profiles_nopara = np.asarray(comm.gather(profiles_nopara, root=0))
+
+    if rank == 0:
+        all_profiles_nopara = all_profiles_nopara.reshape(len(profiles), profiles.shape[-1]*2)
+        return all_profiles_nopara   
+
+def profiles_phase_move(profiles, para_phase_bins):
+
+    profiles_nopara = np.zeros(profiles.reshape(len(profiles), profiles.shape[-1]*2).shape)
+    for ii, profile in list(enumerate(profiles)):
+        print "Profile: ", ii
+        profile_L = profile[0]
+        profile_R = profile[1]
+
+        profile_fft_L = fftpack.fft(profile_L)
+        profile_fft_R = fftpack.fft(profile_R)
+
+        profile_ifft_L_shift = fftpack.ifft(apply_phase_shift(profile_fft_L, para_phase_bins[ii]))
+        profile_ifft_R_shift = fftpack.ifft(apply_phase_shift(profile_fft_R, para_phase_bins[ii]))
+        profiles_nopara[ii] = np.concatenate((profile_ifft_L_shift, profile_ifft_R_shift))
+
+    return profiles_nopara
+
 
 def mpi_phase_fitting(profiles, V, patterns, tint_stack):
 
+    print 'Starting mpi_phase_fitting'
+    print 'profiles.shape', profiles.shape
     '''Scattering profiles to each rank, fitting each profiles, and gathering the results to rank 0'''
     patterns += 'modes_'+str(NMODES)
     if rank == 0:
         npy_lik_name = patterns+'_tint_'+str(tint_stack)+'.npy'
         mpi_profiles = np.split(profiles, size)
+        print 'finished splitting'
     else:
         mpi_profiles = None
 
     mpi_profiles = comm.scatter(mpi_profiles, root=0)
+    print 'finished scatter'
 #    patterns += 'rank_'+str(rank)+'of'+str(size)
     phase_amp_bin_lik = phase_fitting(mpi_profiles, V, patterns, tint_stack)
     npy_lik_file = np.asarray(comm.gather(phase_amp_bin_lik, root=0))
