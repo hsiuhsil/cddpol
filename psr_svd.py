@@ -1002,9 +1002,9 @@ def random_noise(profile_raw):
     profile_random = np.zeros(profile_raw.shape)
     for ii in xrange(profile_random.shape[0]):
         pro_raw_L = profile_raw[ii,0:profile_random.shape[1]/2]
-        pro_L = pro_raw_L + np.array([random.gauss(np.mean(pro_raw_L), np.std(pro_raw_L)) for i in range(profile_random.shape[1]/2)])
+        pro_L = pro_raw_L + np.array([random.gauss(0, np.std(pro_raw_L)) for i in range(profile_random.shape[1]/2)])
         pro_raw_R = profile_raw[ii,profile_random.shape[1]/2:]
-        pro_R = pro_raw_R + np.array([random.gauss(np.mean(pro_raw_R), np.std(pro_raw_R)) for i in range(profile_random.shape[1]/2)])
+        pro_R = pro_raw_R + np.array([random.gauss(0, np.std(pro_raw_R)) for i in range(profile_random.shape[1]/2)])
         profile_random[ii] = np.concatenate((pro_L, pro_R))
 
     return profile_random
