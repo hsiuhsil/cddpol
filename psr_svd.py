@@ -126,7 +126,7 @@ def not_main():
 
 def main():
 
-    prof_stack = [64, 32, 16, 8, 4]#, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
+    prof_stack = [64]#[64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
     NMODES = [1,2]
 #    rms_stack = np.load('gp052a_06to07_rms_stack.npy')
     rms_stack = np.zeros((len(prof_stack), len(NMODES), 3))
@@ -156,7 +156,7 @@ def NMODES_stack(prof_stack, NMODES):
         profile_raw = np.concatenate((profile_raw))
         print 'rank, type(profile_raw)', rank, type(profile_raw)
 
-        if True: # add Gaussian random noises to the profiles.
+        if False: # add Gaussian random noises to the profiles.
             profile_raw = mpi_random_noise(profile_raw)
             print 'rank', rank, 'done adding noise'
 
@@ -169,7 +169,7 @@ def NMODES_stack(prof_stack, NMODES):
         '''Step 2: Construct V modes, and use n-nodes to fit all raw / stacked profiles.
                    The result would be an array of [bin, amps, bin_err, amp_errs].
         '''
-        pattern1, pattern2 = 'gp052a_06to07_random', 'modes_'+str(NMODES)+'_tint_'+str(tint_stack)
+        pattern1, pattern2 = 'gp052a_06to07_', 'modes_'+str(NMODES)+'_tint_'+str(tint_stack)
         pattern = pattern1 + 'raw_' + pattern2
         pattern_move = pattern1 + 'move_' + pattern2
         pattern_refit = pattern1 + 'refit_' + pattern2
@@ -212,8 +212,8 @@ def NMODES_stack(prof_stack, NMODES):
                    The common V-modes were construct by profile_move in step 4 without 
                    stacking profiles.
         '''
-#        V_same = np.load('same_gp052a_06to07_raw_move__norm_var_lik_V.npy')
-        V_same = np.load('same_gp052a_06to07_randommove_modes_1_tint_0.125_norm_var_lik_V.npy')
+        V_same = np.load('same_gp052a_06to07_raw_move__norm_var_lik_V.npy')
+#        V_same = np.load('same_gp052a_06to07_randommove_modes_1_tint_0.125_norm_var_lik_V.npy')
         prof_measures_refit = process_profiles(profile_raw, pattern_refit, NMODES, tint_stack, V_recon=V_same, fit_profile=True)
         print 'type and shape of prof_measures', type(prof_measures), prof_measures.shape
 
@@ -999,12 +999,13 @@ def mpi_random_noise(profiles):
 
 def random_noise(profile_raw):
 
+    noise_factor = 0.8
     profile_random = np.zeros(profile_raw.shape)
     for ii in xrange(profile_random.shape[0]):
         pro_raw_L = profile_raw[ii,0:profile_random.shape[1]/2]
-        pro_L = pro_raw_L + np.array([random.gauss(0, np.std(pro_raw_L)) for i in range(profile_random.shape[1]/2)])
+        pro_L = pro_raw_L + np.array([random.gauss(0, noise_factor*np.std(pro_raw_L)) for i in range(profile_random.shape[1]/2)])
         pro_raw_R = profile_raw[ii,profile_random.shape[1]/2:]
-        pro_R = pro_raw_R + np.array([random.gauss(0, np.std(pro_raw_R)) for i in range(profile_random.shape[1]/2)])
+        pro_R = pro_raw_R + np.array([random.gauss(0, noise_factor*np.std(pro_raw_R)) for i in range(profile_random.shape[1]/2)])
         profile_random[ii] = np.concatenate((pro_L, pro_R))
 
     return profile_random
@@ -1143,8 +1144,8 @@ def phase_fitting(profiles, V, patterns, NMODES, tint_stack, remainder):
         model_fft_R = model(NMODES, pars_fit, V_fft_R)
         print 'model_fft_L.shape', model_fft_L.shape
         print 'profile_fft_L.shape', profile_fft_L.shape
-#        plot_phase_fft(pick_harmonics(profile_fft_L), model_fft_L, ii_rank, plots_path+patterns+'fit_L_')
-#        plot_phase_fft(pick_harmonics(profile_fft_R), model_fft_R, ii_rank, plots_path+patterns+'fit_R_')
+        plot_phase_fft(pick_harmonics(profile_fft_L), model_fft_L, ii_rank, plots_path+patterns+'fit_L_')
+        plot_phase_fft(pick_harmonics(profile_fft_R), model_fft_R, ii_rank, plots_path+patterns+'fit_R_')
         plot_phase_ifft(NMODES, pars_fit, profile_L, profile_R, V_fft_L, V_fft_R, ii_rank, plots_path+patterns+'fit_')
 
         if True:
@@ -1223,7 +1224,7 @@ def phase_fitting(profiles, V, patterns, NMODES, tint_stack, remainder):
             phase_errors_lik.append(std)
             profile_numbers_lik.append(ii)
             # plot the chi2 distribution
-#            plot_phase_diff_chi2(phase_diff_samples, likelihood, norm, ii_rank, plots_path+patterns)
+            plot_phase_diff_chi2(phase_diff_samples, likelihood, norm, ii_rank, plots_path+patterns)
             npy_lik_file[ii] = np.concatenate(([pars_init[0] + mean], pars_fit[1:], [std], errs[1:]))
         else:
             npy_lik_file[ii] = np.concatenate((pars_fit[:], errs[:]))
