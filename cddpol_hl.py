@@ -37,7 +37,7 @@ def TFmt(t):
 def MakeFileList(rank, size):
     import itertools
     epochs = ['a']
-    nums = [7]
+    nums = [6,7]
 #    nums = [3, 4, 6, 7, 9, 10, 12, 13]
 #    nums = [15, 16, 18, 19, 21, 22]
 #    epochs = ['a', 'b', 'c', 'd']
@@ -130,7 +130,7 @@ for fi, evn_file in enumerate(evn_files):
     flstr = "{0:02d}/{1:02d}".format(fi+1, len(evn_files))
     ar_data = "{0}/{1}".format(in_folder, evn_file)
     offset, t00 = FindOffset(ar_data, SR)
-    output_file = '{0}/test_{1}_{2}g_{3}b_{4}+{5}s_'.format(out_folder, evn_file, ngate, band, t00, T*block_length)
+    output_file = '{0}/{1}_{2}g_0b_{3}+{4}s_'.format(out_folder, evn_file, ngate, t00, T*block_length)
     print('output_file is', output_file)
 #    zz = np.zeros(( int(T * 8 / fold_time_length), ngate * 2))
     zz = np.zeros(ngate * 2)

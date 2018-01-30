@@ -126,7 +126,7 @@ def not_main():
 
 def main():
 
-    prof_stack = [64]#[64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
+    prof_stack = [1]#[64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
     NMODES = [1,2]
 #    rms_stack = np.load('gp052a_06to07_rms_stack.npy')
     rms_stack = np.zeros((len(prof_stack), len(NMODES), 3))
@@ -149,7 +149,7 @@ def NMODES_stack(prof_stack, NMODES):
             this_file = h5py.File(hh, 'r')
             print this_file
             t00.append(this_file['t00'][0][0])
-            profile_raw.append(this_file['fold_data_int_0.125_band_0'])
+            profile_raw.append(this_file['fold_data_int_0.125_band_1'])
 
         print 't00', t00
         print 'len and type of profile_raw', profile_raw, len(profile_raw), type(profile_raw)
@@ -169,7 +169,7 @@ def NMODES_stack(prof_stack, NMODES):
         '''Step 2: Construct V modes, and use n-nodes to fit all raw / stacked profiles.
                    The result would be an array of [bin, amps, bin_err, amp_errs].
         '''
-        pattern1, pattern2 = 'gp052a_06to07_', 'modes_'+str(NMODES)+'_tint_'+str(tint_stack)
+        pattern1, pattern2 = 'gp052a_06to07_', 'band_'+str(band)+'_modes_'+str(NMODES)+'_tint_'+str(tint_stack)
         pattern = pattern1 + 'raw_' + pattern2
         pattern_move = pattern1 + 'move_' + pattern2
         pattern_refit = pattern1 + 'refit_' + pattern2
@@ -201,6 +201,7 @@ def NMODES_stack(prof_stack, NMODES):
         plot_raw = pattern+'phase_para.png'
         plot_phase_para(chunk_times, phase_bins_raw, phase_bins_raw_errs, plot_raw)
 
+        
         if prof_stack == 1:            
             '''Step 4: Shift profiles that remove the parabola'''
             profile_move = mpi_phase_move(profile_raw, -1*para_phase_bins)    
@@ -208,44 +209,24 @@ def NMODES_stack(prof_stack, NMODES):
             '''Step 5: Use the shifted profiles to construct a common V modes'''
             process_profiles(profile_move, pattern_move, NMODES, tint_stack)
 
-        '''Step 6: Use the same/common V-modes to fit the profiles in step 1.
+        if False:  
+            '''Step 6: Use the same/common V-modes to fit the profiles in step 1.
                    The common V-modes were construct by profile_move in step 4 without 
                    stacking profiles.
-        '''
-        V_same = np.load('same_gp052a_06to07_raw_move__norm_var_lik_V.npy')
-#        V_same = np.load('same_gp052a_06to07_randommove_modes_1_tint_0.125_norm_var_lik_V.npy')
-        prof_measures_refit = process_profiles(profile_raw, pattern_refit, NMODES, tint_stack, V_recon=V_same, fit_profile=True)
-        print 'type and shape of prof_measures', type(prof_measures), prof_measures.shape
+            '''
+            V_same = np.load('same_gp052a_06to07_raw_move__norm_var_lik_V.npy') # for band 0
 
-        '''Step 7: get the refit TOAs, remove the parabola, and get the std.'''
-        phase_bins_refit = prof_measures_refit[:,0]
-        phase_bins_refit_errs = prof_measures_refit[:, prof_measures.shape[1]/2]
+            prof_measures_refit = process_profiles(profile_raw, pattern_refit, NMODES, tint_stack, V_recon=V_same, fit_profile=True)
+            print 'type and shape of prof_measures', type(prof_measures), prof_measures.shape
 
-#        # fit a parabola for the TOAs distribution
-#        popt_refit, pcov_refit = curve_fit(parabola, chunk_times, phase_bins_refit)
-#        print 'popt_refit, pcov_refit', popt_refit, pcov_refit
-#        # move the raw profiles for removing the parabola effect.
-#        para_phase_bins_refit = np.asarray(parabola(chunk_times, *popt_refit))
+            '''Step 7: get the refit TOAs, remove the parabola, and get the std.'''
+            phase_bins_refit = prof_measures_refit[:,0]
+            phase_bins_refit_errs = prof_measures_refit[:, prof_measures.shape[1]/2]
 
-#        # fit a parabola again for the refit phase bins.
-#        phase_bins_refit2 = phase_bins_refit - para_phase_bins_refit
-#        popt_refit2, pcov_refit2 = curve_fit(parabola, chunk_times, phase_bins_refit2)
-#        print 'popt_refit2, pcov_refit2', popt_refit2, pcov_refit2
-#        para_phase_bins_refit2 = np.asarray(parabola(chunk_times, *popt_refit2))
-
-        # Plotting the parabola and the phase bins
-        plot_refit = pattern_refit+'phase_para_refit.png'
-        rms_refit, rms_refit_remove, rms_refit_remove2 = plot_phase_para(chunk_times, phase_bins_refit, phase_bins_refit_errs, plot_refit)
-        return rms_refit, rms_refit_remove, rms_refit_remove2
-
-        # introduce Gaussian random noise. 
-#        profile_random = np.zeros((profile_raw.shape))
-#        for ii in xrange(profile_random.shape[0]):
-#            pro_raw_L = profile_raw[ii,0:profile_random.shape[1]/2]
-#            pro_L = pro_raw_L + np.array([random.gauss(np.mean(pro_raw_L), np.std(pro_raw_L)) for i in range(profile_random.shape[1]/2)])
-#            pro_raw_R = profile_raw[ii,profile_random.shape[1]/2:]
-#            pro_R = pro_raw_R + np.array([random.gauss(np.mean(pro_raw_R), np.std(pro_raw_R)) for i in range(profile_random.shape[1]/2)])
-#            profile_random[ii] = np.concatenate((pro_L, pro_R))
+            '''Step 8:  Plotting the parabola and the phase bins'''
+            plot_refit = pattern_refit+'phase_para_refit.png'
+            rms_refit, rms_refit_remove, rms_refit_remove2 = plot_phase_para(chunk_times, phase_bins_refit, phase_bins_refit_errs, plot_refit)
+            return rms_refit, rms_refit_remove, rms_refit_remove2
 
         # introduce the noise from SVD analysis. 
         # remove signal modes, and reconstruct noise profiles.
@@ -265,9 +246,6 @@ def NMODES_stack(prof_stack, NMODES):
 #            pro_R = pro_raw_R + np.roll(noise_profiles_raw[ii,profile_svd_noise.shape[1]/2:], ngate/2)
 #            profile_svd_noise[ii] = np.concatenate((pro_L, pro_R))
 
-        # process profiles of raw, random noise, noise from svd
-#        process_profiles(profile_random, 'gp052a_07_random_')
-#        process_profiles(profile_svd_noise, 'gp052a_07_svdnoise_')
 
     if False:
         '''Gather measurements of TOAs and times'''
@@ -398,7 +376,7 @@ def process_profiles(profile, pattern, NMODES, tint_stack, V_recon=None, fit_pro
 
         profile_norm_var = profile_norm_var[:, :]
         print 'profile_norm_var.shape', profile_norm_var.shape
-        plot_spec_dedisperse(profile_norm_var)
+#        plot_spec_dedisperse(profile_norm_var) # to check the spec
 
         print 'finish profile_norm_var'
         # SVD on the normalized variance profile.
