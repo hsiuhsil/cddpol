@@ -36,8 +36,8 @@ def TFmt(t):
 
 def MakeFileList(rank, size):
     import itertools
-    epochs = ['a']
-    nums = [6,7]
+    epochs = ['d']
+    nums = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
 #    nums = [3, 4, 6, 7, 9, 10, 12, 13]
 #    nums = [15, 16, 18, 19, 21, 22]
 #    epochs = ['a', 'b', 'c', 'd']
@@ -130,7 +130,7 @@ for fi, evn_file in enumerate(evn_files):
     flstr = "{0:02d}/{1:02d}".format(fi+1, len(evn_files))
     ar_data = "{0}/{1}".format(in_folder, evn_file)
     offset, t00 = FindOffset(ar_data, SR)
-    output_file = '{0}/{1}_{2}g_0b_{3}+{4}s_'.format(out_folder, evn_file, ngate, t00, T*block_length)
+    output_file = '{0}/{1}_{2}g_0b_{3}+{4}s_h5'.format(out_folder, evn_file, ngate, t00, T*block_length)
     print('output_file is', output_file)
 #    zz = np.zeros(( int(T * 8 / fold_time_length), ngate * 2))
     zz = np.zeros(ngate * 2)
@@ -140,13 +140,14 @@ for fi, evn_file in enumerate(evn_files):
     keys = ['t00', 'fold_data_int_'+str(fold_time_length)+'_band_'+str(band)]
     if os.path.isfile(output_file) == True:
 #        files[output_file] = h5py.File(output_file + 'h5',"r+")
-        this_file = h5py.File(output_file + 'h5',"a")
-        dataset_name == 'fold_data_int_'+str(fold_time_length)+'_band_'+str(band)
-        if dataset_name in this_file == False:
+        this_file = h5py.File(output_file,"a")
+        dataset_name = 'fold_data_int_'+str(fold_time_length)+'_band_'+str(band)
+        if dataset_name not in this_file:
             first_data = zz
             this_file.create_dataset(dataset_name, (0,) + first_data.shape, maxshape = (None,) +first_data.shape, dtype=first_data.dtype, chunks=True)
+            print ('this_file  line 148', this_file.keys())
     else:
-        this_file = h5py.File(output_file + 'h5',"w")
+        this_file = h5py.File(output_file,"w")
         for dataset_name in keys:
             if dataset_name == 't00':
                 first_data = np.zeros(1, dtype=np.float64)
@@ -157,6 +158,7 @@ for fi, evn_file in enumerate(evn_files):
             elif dataset_name == 'fold_data_int_'+str(fold_time_length)+'_band_'+str(band):
                 first_data = zz
                 this_file.create_dataset(dataset_name, (0,) + first_data.shape, maxshape = (None,) +first_data.shape, dtype=first_data.dtype, chunks=True)
+                print ('this_file.keys(), line 161',this_file.keys())
     files[output_file] = this_file
 
 

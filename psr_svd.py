@@ -15,6 +15,7 @@ import random
 from random import gauss
 random.seed(3)
 from scipy import fftpack, optimize, interpolate, linalg, integrate
+from scipy.fftpack import rfft, irfft, fftfreq
 from scipy.optimize import curve_fit
 from mpi4py import MPI
 
@@ -125,18 +126,18 @@ def not_main():
 
 
 def main():
-
-    prof_stack = [1]#[64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
-    NMODES = [1,2]
+#    print 'band',band
+    prof_stack = [64]#[64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
+    NMODES = [1]
 #    rms_stack = np.load('gp052a_06to07_rms_stack.npy')
-    rms_stack = np.zeros((len(prof_stack), len(NMODES), 3))
+    rms_stack = np.zeros((len(prof_stack), len(NMODES), 4))
 
     for ii in xrange(len(prof_stack)):
         for jj in xrange(len(NMODES)):
             rms_stack[ii, jj, :] = NMODES_stack(prof_stack[ii], NMODES[jj])
 
 #    np.save('rms_stack.npy', rms_stack)
-    plot_rms_stack(prof_stack, NMODES, rms_stack)        
+    plot_rms_stack(band, prof_stack, NMODES, rms_stack)        
 
 def NMODES_stack(prof_stack, NMODES):
     if True: 
@@ -149,7 +150,7 @@ def NMODES_stack(prof_stack, NMODES):
             this_file = h5py.File(hh, 'r')
             print this_file
             t00.append(this_file['t00'][0][0])
-            profile_raw.append(this_file['fold_data_int_0.125_band_1'])
+            profile_raw.append(this_file['fold_data_int_0.125_band_'+str(band)])
 
         print 't00', t00
         print 'len and type of profile_raw', profile_raw, len(profile_raw), type(profile_raw)
@@ -191,6 +192,9 @@ def NMODES_stack(prof_stack, NMODES):
         print 'len and type of(chunk_times)',len(chunk_times), type(chunk_times)
 #        print 'len(phase_bins_raw)',len(phase_bins_raw)
 
+        # fftfreq filter         
+        fft_bandpass_filter(chunk_times, phase_bins_raw, phase_bins_raw_errs, tint_stack, pattern)
+
         # fit a parabola for the TOAs distribution
         popt, pcov = curve_fit(parabola, chunk_times, phase_bins_raw)
         print 'popt, pcov', popt, pcov
@@ -199,7 +203,7 @@ def NMODES_stack(prof_stack, NMODES):
         print 'len of para_phase_bins', len(para_phase_bins)       
         # Plotting the parabola and the phase bins
         plot_raw = pattern+'phase_para.png'
-        plot_phase_para(chunk_times, phase_bins_raw, phase_bins_raw_errs, plot_raw)
+        plot_phase_para(chunk_times, phase_bins_raw, phase_bins_raw_errs, band, plot_raw)
 
         
         if prof_stack == 1:            
@@ -209,12 +213,17 @@ def NMODES_stack(prof_stack, NMODES):
             '''Step 5: Use the shifted profiles to construct a common V modes'''
             process_profiles(profile_move, pattern_move, NMODES, tint_stack)
 
-        if False:  
+        if True:  
             '''Step 6: Use the same/common V-modes to fit the profiles in step 1.
                    The common V-modes were construct by profile_move in step 4 without 
                    stacking profiles.
             '''
-            V_same = np.load('same_gp052a_06to07_raw_move__norm_var_lik_V.npy') # for band 0
+            if band == 0:
+                V_same = np.load('same_gp052a_06to07_raw_move__norm_var_lik_V.npy') # for band 0
+            elif band == 1:
+                V_same = np.load('same_gp052a_06to07_move_band_1_modes_1_tint_0.125_norm_var_lik_V.npy') # for band 1
+            elif band == 2:
+                V_same = np.load('same_gp052a_06to07_move_band_2_modes_1_tint_0.125_norm_var_lik_V.npy') # for band 2
 
             prof_measures_refit = process_profiles(profile_raw, pattern_refit, NMODES, tint_stack, V_recon=V_same, fit_profile=True)
             print 'type and shape of prof_measures', type(prof_measures), prof_measures.shape
@@ -225,8 +234,13 @@ def NMODES_stack(prof_stack, NMODES):
 
             '''Step 8:  Plotting the parabola and the phase bins'''
             plot_refit = pattern_refit+'phase_para_refit.png'
-            rms_refit, rms_refit_remove, rms_refit_remove2 = plot_phase_para(chunk_times, phase_bins_refit, phase_bins_refit_errs, plot_refit)
-            return rms_refit, rms_refit_remove, rms_refit_remove2
+            rms_refit, rms_refit_remove, rms_refit_remove2 = plot_phase_para(chunk_times, phase_bins_refit, phase_bins_refit_errs, band, plot_refit)
+
+            '''Step 9: FFT_filter to rule out long wavelengths'''
+            phase_bins_fft_filter = fft_bandpass_filter(chunk_times, phase_bins_refit, phase_bins_refit_errs, tint_stack, pattern_refit)
+            rms_fft_filter = np.std(phase_bins_fft_filter)
+            
+            return rms_refit, rms_refit_remove, rms_refit_remove2, rms_fft_filter
 
         # introduce the noise from SVD analysis. 
         # remove signal modes, and reconstruct noise profiles.
@@ -267,7 +281,90 @@ def NMODES_stack(prof_stack, NMODES):
         print 'times.shape', times.shape
         print 'finished combining phases_amps and times data'
 
-def plot_phase_para(times, phase_bins_raw, phase_bins_raw_errs, plot_name):
+def fft_bandpass_filter(chunk_times, phase_bins_raw, phase_bins_raw_errs, tint_stack, plot_name):
+
+    bin_size = P0 / ngate * 10**6 #microsecond
+    # transfer the unit from phase bins to microseconds
+    phase_bins_raw *= bin_size
+    phase_bins_raw_errs *= bin_size
+
+    # do the fft bandpass filter for even samples. If there are unevenly samples, split them into even samples for analysis and combine the results together.
+
+    filter_phase_bins_raw = []
+
+    split_number = int(len(chunk_times)/(536/tint_stack))
+    split_chunk_times = np.split(chunk_times, split_number)
+    split_phase_bins_raw = np.split(phase_bins_raw, split_number)
+    split_phase_bins_raw_errs = np.split(phase_bins_raw_errs, split_number)
+
+    fftfreq_threshold = 0.010 # Hz
+
+    for i in range(split_number):
+        W = fftfreq(int(536/tint_stack), d=tint_stack)
+        print 'W',W
+        fft_phase_bins_raw = rfft(split_phase_bins_raw[i])
+        print 'fft_phase_bins_raw', fft_phase_bins_raw
+        # If our original signal time was in seconds, this is now in Hz    
+        cut_f_signal = fft_phase_bins_raw.copy()
+        cut_f_signal[(np.abs(W)<fftfreq_threshold)] = 0
+        cut_signal = irfft(cut_f_signal)
+        filter_phase_bins_raw.append(cut_signal)
+
+        # plot the signal and fftfreq before and after the bandpass
+        markersize = 2.0
+        fontsize = 12
+        times = split_chunk_times[i]
+        phase_bins = split_phase_bins_raw[i]
+        phase_bin_errs = split_phase_bins_raw_errs[i]
+
+        zeros_line = np.zeros(len(times))
+
+        plt.close('all')
+#        f, axarr = plt.subplots(2,2)
+#        plt.subplot(221)
+        f, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2)
+        ax1.plot(times, zeros_line, 'r--')
+        ax1.plot(times, phase_bins, 'bo', markersize=markersize)
+        ax1.errorbar(times, phase_bins, yerr= phase_bin_errs, fmt='none', ecolor='b')
+        title1 = 'raw, std: '+str(np.round(np.std(phase_bins),3))+'('+r'$\mu$'+'s)'
+        ax1.set_title(title1, fontsize=fontsize)
+        ax1.set_xlim([min(times), max(times)])
+        ax1.set_ylabel('Fitting TOAs '+'('+r'$\mu$'+'s)', fontsize=fontsize)
+        ax1.set_xlabel('time (sec)', fontsize=fontsize)
+        ax1.tick_params(axis='both', which='major', labelsize=fontsize)
+
+#        plt.subplot(223)
+        ax2.plot(times, zeros_line, 'r--')
+        ax2.plot(times, cut_signal, 'bo', markersize=markersize)
+        ax2.errorbar(times, cut_signal, yerr= phase_bin_errs, fmt='none', ecolor='b')
+        title1 = 'fftfreq filter, std: '+str(np.round(np.std(cut_signal),3))+'('+r'$\mu$'+'s)'
+        ax2.set_title(title1, fontsize=fontsize)
+        ax2.set_xlim([min(times), max(times)])
+        ax2.set_xlabel('time (sec)', fontsize=fontsize)
+#        ax2.set_ylabel('Fitting TOAs '+'('+r'$\mu$'+'s)', fontsize=fontsize)
+        ax2.tick_params(axis='both', which='major', labelsize=fontsize)
+
+        ax3.plot(W,fft_phase_bins_raw, 'ks', markersize=markersize)
+        ax3.set_xlabel('fft freq (Hz)', fontsize=fontsize)
+        ax_xticks = [round(min(W),3), round(0.5*min(W),3), 0, round(0.5*max(W),3), round(max(W),3)]
+        ax3.set_xticks(ax_xticks)
+        ax3.set_xticklabels(map(str,ax_xticks))
+        ax3.set_xlim([min(W), max(W)])
+        ax3.tick_params(axis='both', which='major', labelsize=fontsize)
+
+        ax4.plot(W,cut_f_signal, 'ks', markersize=markersize)
+        ax4.set_xlabel('fft freq (Hz)', fontsize=fontsize)
+        ax4.set_xticks(ax_xticks)
+        ax4.set_xticklabels(map(str,ax_xticks))
+        ax4.set_xlim([min(W), max(W)])
+        ax4.tick_params(axis='both', which='major', labelsize=fontsize)
+        plot_name_fft = plot_name + '_fftfreq_'+str(i)+'.png'
+        plt.savefig(plot_name_fft, bbox_inches='tight', dpi=300)
+
+    filter_phase_bins_raw = np.concatenate((filter_phase_bins_raw)) 
+    return filter_phase_bins_raw
+
+def plot_phase_para(times, phase_bins_raw, phase_bins_raw_errs, band, plot_name):
 
     # remove outliers:
     outliers_index = np.where(phase_bins_raw_errs>2)
@@ -285,7 +382,10 @@ def plot_phase_para(times, phase_bins_raw, phase_bins_raw_errs, plot_name):
     phase_bins_remove = phase_bins_raw - para_phase_bins
 
     # fit a parabola for the phase bins with removing parabola.
-    p0 = [0.6, 0.02, 0.3,-0.1] # init parameters
+    if band == 0:
+        p0 = [0.6, 0.02, 0.3,-0.1] # init parameters for band 0, a_06to07
+    else:
+        p0 = [0.6, 0.01, 0.3,-0.1] # init parameters
     popt_remove, pcov_remove = curve_fit(sine, times, phase_bins_remove, p0=p0)
     print 'popt_remove, pcov_remove', popt_remove, pcov_remove
     para_phase_bins_remove = np.asarray(sine(times, *popt_remove))
@@ -770,21 +870,25 @@ def plot_ut_phase_correlation():
     plot_name = 'u_phase_bins_cor.png'
     plt.savefig(plot_name, bbox_inches='tight', dpi=300)
 
-def plot_rms_stack(prof_stack, NMODES, rms_stack):
+def plot_rms_stack(band, prof_stack, NMODES, rms_stack):
     # note the rms_stack unit should be microsecond.
     # rms_stack is in the shape of (prof_stack, nmodes, (rms of refit, subtract para, subtract sine))
 
     x_axis = np.array(prof_stack)*paras.tint
     tt = np.arange(0.125,60,1)
 
-    plot_names = ['rms_refit','rms_remove_para','rms_remove_sine'] 
+    plot_names = ['band_'+str(band)+'_rms_refit',
+                  'band_'+str(band)+'_rms_remove_para',
+                  'band_'+str(band)+'_rms_remove_sine', 
+                  'band_'+str(band)+'_rms_fftfreq']
     markersize = 4.0
     fontsize = 16
 
     for ii in xrange(len(plot_names)):
         max_value = np.amax(rms_stack[:,:,ii])
         plt.close('all')
-        plt.loglog(tt, 1/np.sqrt(tt)*(np.sqrt(0.125)*max_value), 'k', label='1 / sqrt(t), normalized to the 1 mode')
+        tt_curve = 1/np.sqrt(tt)*(np.sqrt(0.125)*max_value)
+        plt.loglog(tt, tt_curve, 'k', label='1 / sqrt(t)')
         plt.loglog(x_axis, rms_stack[:,:,ii][:,0], 'ro', markersize=markersize, label='1 mode')#, max: '+str(np.amax(np.round(phase_bins_1_rebin_rms,4)))+'('+r'$\mu$'+'s)')
         plt.loglog(x_axis, rms_stack[:,:,ii][:,0], 'r')
         plt.loglog(x_axis, rms_stack[:,:,ii][:,1], 'bs', markersize=markersize, label='2 modes')#, max: '+str(np.amax(np.round(phase_bins_2_rebin_rms, 4)))+'('+r'$\mu$'+'s)')
@@ -795,8 +899,8 @@ def plot_rms_stack(prof_stack, NMODES, rms_stack):
         plt.tick_params(axis='both', which='major', labelsize=fontsize)
         plt.legend(loc='lower left', fontsize=fontsize-4)
         plt.xlim([0,12])
+        plt.ylim([0.2*min(tt_curve), 2*max(tt_curve)])
         title = plot_names[ii]
-#        title = 'diff: '+str(np.round(diff,3))+'('+r'$\mu$'+'s)'#, diff_para: +str(np.round(diff_para,3))+'('+r'$\mu$'+'s)'
         plt.title(title, fontsize=fontsize-4)
         plot_name = plot_names[ii]+'.png'
         plt.savefig(plot_name, bbox_inches='tight', dpi=300)
