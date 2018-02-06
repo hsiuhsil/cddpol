@@ -16,7 +16,7 @@ from random import gauss
 random.seed(3)
 from scipy import fftpack, optimize, interpolate, linalg, integrate
 from scipy.fftpack import rfft, irfft, fftfreq
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, minimize
 from mpi4py import MPI
 
 import copy
@@ -30,7 +30,7 @@ rank = comm.Get_rank()
 rawdata_folder = '/mnt/scratch-lustre/hhlin/Data/'
 time_str_folder = '/mnt/raid-project/gmrt/hhlin/time_streams_1957/'
 #time_str_patterns = time_str_folder + 'gp052*536s_h5'
-time_str_patterns = time_str_folder + 'gp052a_ar_*536s_h5'
+time_str_patterns = time_str_folder + 'gp052*_ar_*536s_h5'
 phase_amp_files = time_str_folder + 'gp052_fit_nodes_1_tint_8.0sec_npy/*nodes*npy'
 TOAs_files = time_str_folder + 'gp052_TOA_nodes_1_tint_8.0sec_npy/*nodes*npy'
 plots_path = '/mnt/raid-cita/hhlin/psr_1957/cddpol/profiles_fitting_plots/'
@@ -126,11 +126,12 @@ def not_main():
 
 
 def main():
+
 #    print 'band',band
-    prof_stack = [64]#[64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
-    NMODES = [1]
+    prof_stack = [1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
+    NMODES = [1, 2]
 #    rms_stack = np.load('gp052a_06to07_rms_stack.npy')
-    rms_stack = np.zeros((len(prof_stack), len(NMODES), 4))
+    rms_stack = np.zeros((len(prof_stack), len(NMODES), 3))
 
     for ii in xrange(len(prof_stack)):
         for jj in xrange(len(NMODES)):
@@ -150,7 +151,11 @@ def NMODES_stack(prof_stack, NMODES):
             this_file = h5py.File(hh, 'r')
             print this_file
             t00.append(this_file['t00'][0][0])
-            profile_raw.append(this_file['fold_data_int_0.125_band_'+str(band)])
+            stack_remainder = this_file['fold_data_int_0.125_band_'+str(band)].shape[0]%prof_stack
+            if stack_remainder != 0:
+                profile_raw.append(this_file['fold_data_int_0.125_band_'+str(band)][:-stack_remainder]) 
+            else:
+                profile_raw.append(this_file['fold_data_int_0.125_band_'+str(band)])
 
         print 't00', t00
         print 'len and type of profile_raw', profile_raw, len(profile_raw), type(profile_raw)
@@ -185,15 +190,19 @@ def NMODES_stack(prof_stack, NMODES):
 
         chunk_times = []
         for ii in xrange(len(t00)):        
-            times = np.arange(0 + tint_stack/2, 536, tint_stack) # all chunks of each data
+            times = np.arange(0 + tint_stack/2, 536-stack_remainder*tint, tint_stack) # all chunks of each data
             times_ii = times + 86400*(t00[ii]-t00[0])
             chunk_times.append(times_ii)
         chunk_times = np.concatenate((chunk_times))
         print 'len and type of(chunk_times)',len(chunk_times), type(chunk_times)
 #        print 'len(phase_bins_raw)',len(phase_bins_raw)
 
-        # fftfreq filter         
-        fft_bandpass_filter(chunk_times, phase_bins_raw, phase_bins_raw_errs, tint_stack, pattern)
+        # fit a n-order polynomial
+#        for n in xrange(2,8):
+#            poly_n = poly(x, a, n)
+#            popt, pcov = curve_fit(poly_n, chunk_times, phase_bins_raw)
+            
+#            print 'popt, pcov', popt, pcov
 
         # fit a parabola for the TOAs distribution
         popt, pcov = curve_fit(parabola, chunk_times, phase_bins_raw)
@@ -237,10 +246,10 @@ def NMODES_stack(prof_stack, NMODES):
             rms_refit, rms_refit_remove, rms_refit_remove2 = plot_phase_para(chunk_times, phase_bins_refit, phase_bins_refit_errs, band, plot_refit)
 
             '''Step 9: FFT_filter to rule out long wavelengths'''
-            phase_bins_fft_filter = fft_bandpass_filter(chunk_times, phase_bins_refit, phase_bins_refit_errs, tint_stack, pattern_refit)
-            rms_fft_filter = np.std(phase_bins_fft_filter)
+#            phase_bins_fft_filter = fft_bandpass_filter(chunk_times, phase_bins_refit, phase_bins_refit_errs, tint_stack, pattern_refit)
+#            rms_fft_filter = np.std(phase_bins_fft_filter)
             
-            return rms_refit, rms_refit_remove, rms_refit_remove2, rms_fft_filter
+            return rms_refit, rms_refit_remove, rms_refit_remove2
 
         # introduce the noise from SVD analysis. 
         # remove signal modes, and reconstruct noise profiles.
@@ -364,6 +373,18 @@ def fft_bandpass_filter(chunk_times, phase_bins_raw, phase_bins_raw_errs, tint_s
     filter_phase_bins_raw = np.concatenate((filter_phase_bins_raw)) 
     return filter_phase_bins_raw
 
+def average_bands():
+
+    for f in sorted(glob.glob(time_str_patterns)):
+        print f
+        ff = h5py.File(f, 'a')
+        first_data = ff['fold_data_int_0.125_band_0']
+        dataset_name = 'fold_data_int_'+str(0.125)+'_band_'+str(3)
+        ff.create_dataset(dataset_name, first_data.shape, maxshape = first_data.shape, dtype=first_data.dtype, chunks=True)
+        ff['fold_data_int_0.125_band_3'][:] = (ff['fold_data_int_0.125_band_0'][:] + ff['fold_data_int_0.125_band_1'][:] + ff['fold_data_int_0.125_band_2'][:])/3
+        print 'averaged data:', ff['fold_data_int_0.125_band_3'][:]
+
+
 def plot_phase_para(times, phase_bins_raw, phase_bins_raw_errs, band, plot_name):
 
     # remove outliers:
@@ -375,10 +396,14 @@ def plot_phase_para(times, phase_bins_raw, phase_bins_raw_errs, band, plot_name)
     phase_bins_raw_errs = np.delete(phase_bins_raw_errs, outliers_index)
 
     # fit a parabola for the TOAs distribution
-    popt, pcov = curve_fit(parabola, times, phase_bins_raw)
-    print 'popt, pcov ', popt, pcov
+    popt_para, pcov_para = curve_fit(parabola, times, phase_bins_raw)
+    print 'popt_para, pcov_para ', popt_para, pcov_para
+    fit_para = (["", "+"][popt_para[0] > 0]+'{:0.3e}'.format(popt_para[0])+r'$t^2$' 
+             + ["", "+"][popt_para[1] > 0]+'{:0.3e}'.format(popt_para[1])+r'$t$' 
+             + ["", "+"][popt_para[2] > 0]+'{:0.3e}'.format(popt_para[2]))
+    print 'fit_para',fit_para
     # move the raw profiles for removing the parabola effect.
-    para_phase_bins = np.asarray(parabola(times, *popt))
+    para_phase_bins = np.asarray(parabola(times, *popt_para))
     phase_bins_remove = phase_bins_raw - para_phase_bins
 
     # fit a parabola for the phase bins with removing parabola.
@@ -388,6 +413,11 @@ def plot_phase_para(times, phase_bins_raw, phase_bins_raw_errs, band, plot_name)
         p0 = [0.6, 0.01, 0.3,-0.1] # init parameters
     popt_remove, pcov_remove = curve_fit(sine, times, phase_bins_remove, p0=p0)
     print 'popt_remove, pcov_remove', popt_remove, pcov_remove
+    fit_sine = ('{:0.3e}'.format(popt_remove[0]) + '*sin('
+             +'{:0.3e}'.format(popt_remove[1]) + r'$t$'
+             + ["", "+"][popt_remove[2] > 0]+'{:0.3e}'.format(popt_remove[2]) + ')'
+             + ["", "+"][popt_remove[3] > 0]+'{:0.3e}'.format(popt_remove[3]))
+
     para_phase_bins_remove = np.asarray(sine(times, *popt_remove))
     phase_bins_remove2 = phase_bins_remove - para_phase_bins_remove
 
@@ -430,8 +460,8 @@ def plot_phase_para(times, phase_bins_raw, phase_bins_raw_errs, band, plot_name)
     axarr[1].plot(times, np.asarray(sine(times, *p0)), 'g')
     axarr[1].plot(times, para_phase_bins_remove, 'k')
     axarr[1].set_ylabel('Fitting TOAs '+'('+r'$\mu$'+'s)' , fontsize=fontsize)
-    title_1 = 'Subtracting the parabola, std: '+str(round(std_remove,4))+'('+r'$\mu$'+'s)'
-    axarr[1].set_title(title_1)
+    title_1 = 'Subtract the parabola:'+fit_para+', std: '+str(round(std_remove,4))+'('+r'$\mu$'+'s)'
+    axarr[1].set_title(title_1, fontsize=fontsize-2)
     axarr[1].tick_params(axis='both', which='major', labelsize=fontsize)
 
 
@@ -440,8 +470,8 @@ def plot_phase_para(times, phase_bins_raw, phase_bins_raw_errs, band, plot_name)
     axarr[2].errorbar(times, phase_bins_remove2, yerr= phase_bins_raw_errs, fmt='none', ecolor='b')
     axarr[2].set_xlabel('Times (sec)')
     axarr[2].set_ylabel('Fitting TOAs '+'('+r'$\mu$'+'s)' , fontsize=fontsize)
-    title_2 = 'Subtracting the sine (black), std:'+str(round(std_remove2,4))+'('+r'$\mu$'+'s)'
-    axarr[2].set_title(title_2)
+    title_2 = 'Subtract the sine (black):'+fit_sine+', std:'+str(round(std_remove2,4))+'('+r'$\mu$'+'s)'
+    axarr[2].set_title(title_2, fontsize=fontsize-2)
     axarr[2].set_xlim([xmin, xmax])
     axarr[2].tick_params(axis='both', which='major', labelsize=fontsize)
 
@@ -513,6 +543,12 @@ def sine(x, a, b, c, d):
 
 def parabola(x, a, b, c):
     return a*x**2 + b*x + c      
+
+def poly(x, a, n):
+    X = np.zeros((n,))
+    for i in xrange(n):
+        X[i] = x**i
+    return X*a
 
 def generate_tim_file():
 
@@ -879,8 +915,8 @@ def plot_rms_stack(band, prof_stack, NMODES, rms_stack):
 
     plot_names = ['band_'+str(band)+'_rms_refit',
                   'band_'+str(band)+'_rms_remove_para',
-                  'band_'+str(band)+'_rms_remove_sine', 
-                  'band_'+str(band)+'_rms_fftfreq']
+                  'band_'+str(band)+'_rms_remove_sine']
+    #              'band_'+str(band)+'_rms_fftfreq']
     markersize = 4.0
     fontsize = 16
 
@@ -1437,7 +1473,9 @@ def plot_svd(file, plot_name):
     UT = U.T
 
     V_name = plot_name + '_V.npy'
+    UT_name = plot_name + '_UT.npy'
     np.save(V_name, V)
+    np.save(UT_name, UT)
  
     print 'len(V[0])', len(V[0])
     print 'UT.shape', UT.shape
@@ -1467,7 +1505,7 @@ def plot_svd(file, plot_name):
     plt.figure()
     n_step = -0.3
     x_range = np.arange(0 , len(V[0]))
-    color = ['r', 'g', 'b', 'y', 'c', '0.0', '0.2', '0.4', '0.6', '0.8']
+    color = ['r', 'g', 'b', 'y', 'c', '0.0', '0.4', '0.8']
 #    color = ['r', 'g', 'b']
     for ii in xrange(len(color)):
         plt.plot(x_range, np.roll(V[ii] + ii *n_step, 0), color[ii], linewidth=1.0)
@@ -1482,7 +1520,7 @@ def plot_svd(file, plot_name):
     plt.figure()
     n_step = -0.3
     x_range = np.arange(0 , len(UT[0]))
-    color = ['r', 'g', 'b', 'y', 'c', '0.0', '0.2', '0.4', '0.6', '0.8']
+    color = ['r', 'g', 'b', 'y', 'c', '0.0', '0.4', '0.8']
 #    color = ['r', 'g', 'b']
     for ii in xrange(len(color)):
         plt.plot(x_range, np.roll(UT[ii] + ii *n_step, 0), color[ii], linewidth=1.0)
