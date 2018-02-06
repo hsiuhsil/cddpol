@@ -128,7 +128,7 @@ def not_main():
 def main():
 
 #    print 'band',band
-    prof_stack = [1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
+    prof_stack = [64]#[1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
     NMODES = [1, 2]
 #    rms_stack = np.load('gp052a_06to07_rms_stack.npy')
     rms_stack = np.zeros((len(prof_stack), len(NMODES), 3))
@@ -144,9 +144,18 @@ def NMODES_stack(prof_stack, NMODES):
     if True: 
         '''Step 1: Get the raw / stacked profiles'''
 
+        # list the epochs and sessions
+        dict = {}
+        epochs = ['a', 'b', 'c', 'd']
+        sessions = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
+        for i in range(len(epochs)*len(sessions)):
+            dict[i] = epochs[i/len(sessions)]+str(sessions[i%len(sessions)])
+
+        start, end = 2, 3 # sessions of starting and end(included)
+        pattern1 = 'gp052_' + dict[start] + '_to_' + dict[end]
         t00 = []
-        profile_raw=[]
-        for ii in xrange(2,4): #xrange(len(glob.glob(time_str_patterns))):
+        profile_raw=[]      
+        for ii in xrange(start, end+1): #xrange(len(glob.glob(time_str_patterns))):
             hh = glob.glob(time_str_folder + str(sorted(glob.glob(time_str_patterns))[ii][47:63]) + '*h5')[0]
             this_file = h5py.File(hh, 'r')
             print this_file
@@ -175,7 +184,7 @@ def NMODES_stack(prof_stack, NMODES):
         '''Step 2: Construct V modes, and use n-nodes to fit all raw / stacked profiles.
                    The result would be an array of [bin, amps, bin_err, amp_errs].
         '''
-        pattern1, pattern2 = 'gp052a_06to07_', 'band_'+str(band)+'_modes_'+str(NMODES)+'_tint_'+str(tint_stack)
+        pattern2 = 'band_'+str(band)+'_modes_'+str(NMODES)+'_tint_'+str(tint_stack)
         pattern = pattern1 + 'raw_' + pattern2
         pattern_move = pattern1 + 'move_' + pattern2
         pattern_refit = pattern1 + 'refit_' + pattern2
@@ -198,11 +207,14 @@ def NMODES_stack(prof_stack, NMODES):
 #        print 'len(phase_bins_raw)',len(phase_bins_raw)
 
         # fit a n-order polynomial
-#        for n in xrange(2,8):
-#            poly_n = poly(x, a, n)
-#            popt, pcov = curve_fit(poly_n, chunk_times, phase_bins_raw)
-            
-#            print 'popt, pcov', popt, pcov
+        n_values, res_values = [], []
+        for n in xrange(1,9):
+            n_values.append(n)
+            popt, pcov = curve_fit(poly_n, chunk_times, phase_bins_raw, p0=[0]*(n+1))
+            res = (sum((phase_bins_raw-poly_n(chunk_times, *popt))**2) 
+                   / (len(phase_bins_raw)-(n+1)))
+            res_values.append(res)
+        plot_n_res(n_values, res_values, pattern)
 
         # fit a parabola for the TOAs distribution
         popt, pcov = curve_fit(parabola, chunk_times, phase_bins_raw)
@@ -289,6 +301,21 @@ def NMODES_stack(prof_stack, NMODES):
         times = np.hstack(lists_times)
         print 'times.shape', times.shape
         print 'finished combining phases_amps and times data'
+
+def plot_n_res(n_values, res_values, plot_name):
+
+    markersize, fontsize = 4.0, 12
+
+    plt.close('all')
+    x_axis = np.array(n_values)
+    plt.plot(x_axis, np.array(res_values), 'ro', markersize=markersize)
+    plt.plot(x_axis, np.array(res_values), 'r')
+    plt.xlabel('order of the polynomial', fontsize=fontsize)
+    plt.ylabel('Residuals', fontsize=fontsize)
+    plt.tick_params(axis='both', which='major', labelsize=fontsize)
+    plot_name += 'n_res.png'
+    plt.savefig(plot_name, bbox_inches='tight', dpi=300)
+
 
 def fft_bandpass_filter(chunk_times, phase_bins_raw, phase_bins_raw_errs, tint_stack, plot_name):
 
@@ -544,11 +571,8 @@ def sine(x, a, b, c, d):
 def parabola(x, a, b, c):
     return a*x**2 + b*x + c      
 
-def poly(x, a, n):
-    X = np.zeros((n,))
-    for i in xrange(n):
-        X[i] = x**i
-    return X*a
+def poly_n(x, *parameters):
+    return sum([p*(x**i) for i, p in enumerate(parameters)])
 
 def generate_tim_file():
 
