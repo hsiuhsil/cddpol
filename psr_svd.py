@@ -70,6 +70,16 @@ print 'PEPOCH', PEPOCH
 band = int(sys.argv[2])
 print band
 
+# list the epochs and sessions
+dict = {}
+epochs = ['a', 'b', 'c', 'd']
+sessions = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
+for i in range(len(epochs)*len(sessions)):
+    dict[i] = epochs[i/len(sessions)]+str(sessions[i%len(sessions)])
+
+start, end = 18, 19 # decide the sessions of starting and end(included)
+
+
 def not_main():
     if False: #combine all folding data in one single array.
 
@@ -127,32 +137,44 @@ def not_main():
 
 def main():
 
-#    print 'band',band
-    prof_stack = [512, 256, 128]#[1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
-    NMODES = [1, 2]
-#    rms_stack = np.load('gp052a_06to07_rms_stack.npy')
-    rms_stack = np.zeros((len(prof_stack), len(NMODES), 3))
+#    plot_ut_bands_correlation()
+#    print 'done cor plots'
 
+    prof_stack = [64]#[512, 256, 128, 64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
+    NMODES = [1,2]
+
+#    rms_stack = np.zeros((len(prof_stack), len(NMODES), 3))
+
+    rms_name = 'gp052_' + dict[start]+'_to_'+dict[end] + '_band_'+str(band)+'_rms'
+    rms_file = rms_name+'.npy'
+
+    if os.path.isfile(rms_file) is True:
+        rms = np.load(rms_file).item()
+    else:
+        rms = {}
+ 
     for ii in xrange(len(prof_stack)):
         for jj in xrange(len(NMODES)):
-            pattern_refit = NMODES_stack(prof_stack[ii], NMODES[jj])[0]
-            rms_stack[ii, jj, :] = NMODES_stack(prof_stack[ii], NMODES[jj])[1:]
+#            pattern_refit = NMODES_stack(prof_stack[ii], NMODES[jj])[0]
+            key = 'band_'+str(band)+'_modes_'+str(NMODES[jj])+'_tint_'+str(prof_stack[ii]*tint)
+            rms[key] = NMODES_stack(prof_stack[ii], NMODES[jj])
+        np.save(rms_file, rms)
 
-#    np.save('rms_stack.npy', rms_stack)
-    plot_rms_stack(band, prof_stack, NMODES, rms_stack, pattern_refit)        
+    rms_stack = np.load(rms_file).item()        
+    plot_rms_stack(band, prof_stack, NMODES, rms_stack, rms_name)        
 
 def NMODES_stack(prof_stack, NMODES):
 
     '''Step 1: Get the raw / stacked profiles'''
-
     # list the epochs and sessions
-    dict = {}
-    epochs = ['a', 'b', 'c', 'd']
-    sessions = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
-    for i in range(len(epochs)*len(sessions)):
-        dict[i] = epochs[i/len(sessions)]+str(sessions[i%len(sessions)])
+#    dict = {}
+#    epochs = ['a', 'b', 'c', 'd']
+#    sessions = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
+#    for i in range(len(epochs)*len(sessions)):
+#        dict[i] = epochs[i/len(sessions)]+str(sessions[i%len(sessions)])
 
-    start, end = 18, 19 # decide the sessions of starting and end(included)
+#    start, end = 18, 19 # decide the sessions of starting and end(included)
+
     pattern1 = 'gp052_' + dict[start] + '_to_' + dict[end]
     pattern2 = 'band_'+str(band)+'_modes_'+str(NMODES)+'_tint_'+str(tint)
     
@@ -203,36 +225,32 @@ def NMODES_stack(prof_stack, NMODES):
 
         chunk_times_8sec = get_chunk_times(t00, tint_8sec)
         chunk_times_raw = get_chunk_times(t00, tint) 
-        # fit a n-order polynomial
-#        if False:
-#            n_values, res_values, var_values = [], [], []
-#            for n in xrange(1,9):
-#                n_values.append(n)
-#                popt, pcov = curve_fit(poly_n, chunk_times, phase_bins_raw, p0=[0]*(n+1))
-#                res = (sum((phase_bins_raw-poly_n(chunk_times, *popt))**2) 
-#                       / (len(phase_bins_raw)-(n+1)))
-#                res_values.append(res)
-#                var = np.var(poly_n(chunk_times, *popt))
-#                print 'n, mse', n, var
-#                var_values.append(var)
-#            plot_n_res_var(n_values, res_values, var_values, pattern)
 
-        # fit a parabola for the TOAs distribution of the 8sec profiles
-        popt, pcov = curve_fit(parabola, chunk_times_8sec, phase_bins_8sec)
-        print 'popt, pcov', popt, pcov
+        if True: # fit a n-order polynomial
+            for n in xrange(9, 12):
+                print 'poly order: ',n
+                plot_raw = pattern+'n'+str(n)+'_poly.png'
+                popt = plot_phase_poly(chunk_times_8sec, phase_bins_8sec, phase_bins_8sec_errs, band, n, plot_raw)
+                move_phase_bins = np.asarray(poly_n(chunk_times_raw, *popt))
+                profile_move = mpi_phase_move(profile_raw, -1*move_phase_bins)
+                pattern_move_poly = pattern_move+'n'+str(n)+'_poly'
+                prof_measures_move = process_profiles(profile_move, pattern_move_poly, NMODES, tint, V_recon=None, fit_profile=False, save_V=True)
+
+        else: # fit a parabola and a sine wave.
+            popt, pcov = curve_fit(parabola, chunk_times_8sec, phase_bins_8sec)
+            print 'popt, pcov', popt, pcov
          
-        # Plotting the parabola and the phase bins
-        plot_raw = pattern+'phase_para.png'
-        plot_phase_para(chunk_times_8sec, phase_bins_8sec, phase_bins_8sec_errs, band, plot_raw)
-       
-        '''Step 4: Shift profiles that remove the parabola'''
-        # move the raw profiles for removing the parabola effect.
-        para_phase_bins = np.asarray(parabola(chunk_times_raw, *popt))
-        print 'len of para_phase_bins', len(para_phase_bins)
-        profile_move = mpi_phase_move(profile_raw, -1*para_phase_bins)    
+            # Plotting the parabola and the phase bins
+            plot_raw = pattern+'phase_para.png'
+            plot_phase_para(chunk_times_8sec, phase_bins_8sec, phase_bins_8sec_errs, band, plot_raw)
+            move_phase_bins = np.asarray(poly_n(chunk_times_raw, *popt))       
 
-        '''Step 5: Use the shifted profiles to construct a common V modes'''
-        prof_measures_move = process_profiles(profile_move, pattern_move, NMODES, tint, V_recon=None, fit_profile=False, save_V=True)
+            '''Step 4: Shift profiles that remove the parabola'''
+            # move the raw profiles for removing the n-poly / parabola effect.
+            profile_move = mpi_phase_move(profile_raw, -1*move_phase_bins)    
+
+            '''Step 5: Use the shifted profiles to construct a common V modes'''
+            prof_measures_move = process_profiles(profile_move, pattern_move, NMODES, tint, V_recon=None, fit_profile=False, save_V=True)
         print 'the construction of the common V mode finished.'
 
     else:
@@ -255,7 +273,9 @@ def NMODES_stack(prof_stack, NMODES):
 
         '''Step 7: get the refit TOAs, remove the parabola, and get the std.'''
         phase_bins_refit = prof_measures_refit[:,0]
+        np.save('phase_bins_refit_test.npy', phase_bins_refit)
         phase_bins_refit_errs = prof_measures_refit[:, prof_measures_refit.shape[1]/2]
+        np.save('phase_bins_refit_errs_test.npy', phase_bins_refit_errs)
 
         '''Step 8:  Plotting the parabola and the phase bins'''
         plot_refit = pattern_refit+'phase_para_refit.png'
@@ -264,7 +284,7 @@ def NMODES_stack(prof_stack, NMODES):
         rms_refit, rms_refit_remove, rms_refit_remove2 = plot_phase_para(chunk_times_stack, phase_bins_refit, phase_bins_refit_errs, band, plot_refit)
 
         print 'finished steps 1-8'            
-        return pattern_refit, rms_refit, rms_refit_remove, rms_refit_remove2
+        return [rms_refit, rms_refit_remove, rms_refit_remove2]
 
 def get_chunk_times(t00, tint_stack, stack_remainder=0):
     chunk_times = []
@@ -387,11 +407,94 @@ def average_bands():
         ff['fold_data_int_0.125_band_3'][:] = (ff['fold_data_int_0.125_band_0'][:] + ff['fold_data_int_0.125_band_1'][:] + ff['fold_data_int_0.125_band_2'][:])/3
         print 'averaged data:', ff['fold_data_int_0.125_band_3'][:]
 
+def find_outlier_index(phase_bins_raw, phase_bins_raw_errs):
+
+    # remove outliers: 1) phase_bins_raw_errs > 2 phase bins 2) abs(phase_bins_raw - mean) > 5\sigma
+    phase_bins_mean = np.mean(phase_bins_raw)
+    phase_bins_std = np.std(phase_bins_raw)
+
+    cond_1 = phase_bins_raw_errs > 2
+#    print 'cond_1', cond_1
+    cond_2 = np.abs(phase_bins_raw - phase_bins_mean) > 5*phase_bins_std
+#    print 'cond_2', cond_2
+
+    outliers_index = np.where(np.logical_or(cond_1, cond_2))
+#    print 'outliers_index', outliers_index
+    return outliers_index
+
+
+def plot_phase_poly(times, phase_bins_raw, phase_bins_raw_errs, band, n, plot_name):
+
+    # remove outliers:
+    outliers_index = find_outlier_index(phase_bins_raw, phase_bins_raw_errs)
+    outliers_count = len(outliers_index[0])
+    print 'numbers and index of outlier:', outliers_count, outliers_index
+    times = np.delete(times, outliers_index)
+    phase_bins_raw = np.delete(phase_bins_raw, outliers_index)
+    phase_bins_raw_errs = np.delete(phase_bins_raw_errs, outliers_index)
+
+    # fit a parabola for the TOAs distribution
+    popt, pcov = curve_fit(poly_n, times, phase_bins_raw, p0=[0]*(n+1))
+    print 'popt, pcov', popt, pcov
+#    fit_para = (["", "+"][popt[0] > 0]+'{:0.3e}'.format(popt[0])+r'$t^2$'
+#              + ["", "+"][popt[1] > 0]+'{:0.3e}'.format(popt[1])+r'$t$'
+#              + ["", "+"][popt[2] > 0]+'{:0.3e}'.format(popt[2]))
+#    print 'fit_para',fit_para
+
+    # move the raw profiles for removing the n-poly effect.
+    poly_phase_bins = np.asarray(poly_n(times, *popt))
+    phase_bins_remove = phase_bins_raw - poly_phase_bins
+
+    # Plotting the parabola and the phase bins
+    markersize = 2.0
+    fontsize = 12
+    zeros_line = np.zeros(len(times))
+    xmin, xmax = np.amin(times), np.amax(times)
+
+    bin_size = P0 / ngate * 10**6 #microsecond
+    # transfer the unit from phase bins to microseconds
+    phase_bins_raw *= bin_size
+    phase_bins_raw_errs *= bin_size
+    poly_phase_bins *= bin_size
+    phase_bins_remove *= bin_size
+
+    # calculate the std, which has a unit of microsecond
+    std_raw = np.std(phase_bins_raw)
+    std_remove = np.std(phase_bins_remove)
+
+    plt.close('all')
+    f, axarr = plt.subplots(2, sharex=True)
+    axarr[0].plot(times, zeros_line, 'r--')
+    axarr[0].plot(times, phase_bins_raw, 'bo', markersize=markersize)
+    axarr[0].errorbar(times, phase_bins_raw, yerr= phase_bins_raw_errs, fmt='none', ecolor='b')
+    axarr[0].plot(times, poly_phase_bins, 'k')
+    axarr[0].set_ylabel('Fitting TOAs '+'('+r'$\mu$'+'s)' , fontsize=fontsize)
+    title_0 = 'Origin TOAs, std: '+str(round(std_raw, 4))+'('+r'$\mu$'+'s)'
+    if outliers_count > 0:
+        title_0 += ', outliers: '+str(outliers_count)
+    axarr[0].set_title(title_0)
+    axarr[0].tick_params(axis='both', which='major', labelsize=fontsize)
+
+    axarr[1].plot(times, zeros_line, 'r--')
+    axarr[1].plot(times, phase_bins_remove, 'bo', markersize=markersize)
+    axarr[1].errorbar(times, phase_bins_remove, yerr= phase_bins_raw_errs, fmt='none', ecolor='b')
+    axarr[1].set_xlabel('Times (sec)')
+    axarr[1].set_ylabel('Fitting TOAs '+'('+r'$\mu$'+'s)' , fontsize=fontsize)
+    title_1 = 'Subtract the poly (black) of order '+str(n)+', coef:'+str(np.round(popt,3))+', std:'+str(round(std_remove,4))+'('+r'$\mu$'+'s)'
+    axarr[1].set_title(title_1, fontsize=fontsize-2)
+    axarr[1].set_xlim([xmin, xmax])
+    axarr[1].tick_params(axis='both', which='major', labelsize=fontsize)
+#    plt.legend(loc='upper right', fontsize=fontsize-4)
+    plt.savefig(plot_name, bbox_inches='tight', dpi=300)
+
+    return popt
+
+
 
 def plot_phase_para(times, phase_bins_raw, phase_bins_raw_errs, band, plot_name):
 
     # remove outliers:
-    outliers_index = np.where(phase_bins_raw_errs>2)
+    outliers_index = find_outlier_index(phase_bins_raw, phase_bins_raw_errs)
     outliers_count = len(outliers_index[0])
     print 'numbers and index of outlier:', outliers_count, outliers_index
     times = np.delete(times, outliers_index)
@@ -880,6 +983,44 @@ def plot_ut_phase_time_streams():
         plot_name = 'u1_phase_stream_'+str(tot_chunk)+'_'+str(ii)+'.png'
         plt.savefig(plot_name, bbox_inches='tight', dpi=300)
 
+def plot_ut_bands_correlation():
+
+    # load the UT of each band:
+    brange = 10
+    b0 = np.load('gp052_b9_to_b10_move_band_0_modes_1_tint_0.125_norm_var_lik_UT.npy')[:brange]
+    b1 = np.load('gp052_b9_to_b10_move_band_1_modes_1_tint_0.125_norm_var_lik_UT.npy')[:brange]
+    b2 = np.load('gp052_b9_to_b10_move_band_2_modes_1_tint_0.125_norm_var_lik_UT.npy')[:brange]
+
+    # correlation sets
+    cor_sets = [[b0, b1], [b0, b2], [b1, b2]]
+
+    for i in xrange(len(cor_sets)):
+        #calculate the correlation matrix
+        bcor = np.zeros((brange, brange))
+        for ii in range(brange):
+            for jj in range(brange):
+#            for jj in range(brange-1, -1, -1):
+                bcor[brange-ii-1, jj] = np.correlate(cor_sets[i][0][ii], cor_sets[i][1][jj])
+        # plot the correlation
+        cmap = cm.jet
+        extent = [0, brange, 0, brange]
+        plt.close('all')
+        plt.imshow(bcor, extent=extent, aspect='auto', cmap = cmap)
+        plt.colorbar()
+        if i == 0:
+            xlabel, ylabel = 'U modes of the 1st band', 'U modes of the 2nd band'
+            plot_name = 'band_corr_'+'b0_b1.png'
+        elif i == 1:
+            xlabel, ylabel = 'U modes of the 1st band', 'U modes of the 3rd band'
+            plot_name = 'band_corr_'+'b0_b2.png'
+        elif i == 2:
+            xlabel, ylabel = 'U modes of the 2nd band', 'U modes of the 3rd band'
+            plot_name = 'band_corr_'+'b1_b2.png'
+
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.savefig(plot_name, bbox_inches='tight', dpi=300)
+
 def plot_ut_phase_correlation():
     
     ut = np.load('UT_.npy')
@@ -915,32 +1056,54 @@ def plot_rms_stack(band, prof_stack, NMODES, rms_stack, pattern_refit):
     # note the rms_stack unit should be microsecond.
     # rms_stack is in the shape of (prof_stack, nmodes, (rms of refit, subtract para, subtract sine))
 
-    x_axis = np.array(prof_stack)*paras.tint
-    tt = np.arange(0.125,60,1)
+    x_axis = np.array(prof_stack)*tint
+    tt = np.arange(0.125,65,1)
 
-    plot_names = [pattern_refit + '_rms_refit',
-                  pattern_refit + '_rms_remove_para',
-                  pattern_refit + '_rms_remove_sine']
+    plot_names = [pattern_refit + '_refit',
+                  pattern_refit + '_remove_para',
+                  pattern_refit + '_remove_sine']
+
+    refit, para, sine = [], [], []
+    refit_1, refit_2, para_1, para_2, sine_1, sine_2 = [], [], [], [], [], []
+    for i in prof_stack:
+        refit_1.append(rms_stack['band_'+str(band)+'_modes_'+str(1)+'_tint_'+str(i*tint)][0])
+        refit_2.append(rms_stack['band_'+str(band)+'_modes_'+str(2)+'_tint_'+str(i*tint)][0])
+        para_1.append(rms_stack['band_'+str(band)+'_modes_'+str(1)+'_tint_'+str(i*tint)][1])
+        para_2.append(rms_stack['band_'+str(band)+'_modes_'+str(2)+'_tint_'+str(i*tint)][1])
+        sine_1.append(rms_stack['band_'+str(band)+'_modes_'+str(1)+'_tint_'+str(i*tint)][2])
+        sine_2.append(rms_stack['band_'+str(band)+'_modes_'+str(2)+'_tint_'+str(i*tint)][2])
+    refit.append(refit_1)
+    refit.append(refit_2)
+    para.append(para_1)
+    para.append(para_2)
+    sine.append(sine_1)
+    sine.append(sine_2)
 
     markersize = 4.0
     fontsize = 16
 
     for ii in xrange(len(plot_names)):
-        max_value = np.amax(rms_stack[:,:,ii])
+        if ii == 0:
+            rms_points = refit
+        elif ii == 1:
+            rms_points = para
+        elif ii == 2:
+            rms_points = sine 
+        max_value = max(max(rms_points))
         plt.close('all')
         tt_curve = 1/np.sqrt(tt)*(np.sqrt(0.125)*max_value)
         plt.loglog(tt, tt_curve, 'k', label='1 / sqrt(t)')
-        plt.loglog(x_axis, rms_stack[:,:,ii][:,0], 'ro', markersize=markersize, label='1 mode')#, max: '+str(np.amax(np.round(phase_bins_1_rebin_rms,4)))+'('+r'$\mu$'+'s)')
-        plt.loglog(x_axis, rms_stack[:,:,ii][:,0], 'r')
-        plt.loglog(x_axis, rms_stack[:,:,ii][:,1], 'bs', markersize=markersize, label='2 modes')#, max: '+str(np.amax(np.round(phase_bins_2_rebin_rms, 4)))+'('+r'$\mu$'+'s)')
-        plt.loglog(x_axis, rms_stack[:,:,ii][:,1], 'b--')
+        plt.loglog(x_axis, rms_points[0], 'ro', markersize=markersize, label='1 mode')#, max: '+str(np.amax(np.round(phase_bins_1_rebin_rms,4)))+'('+r'$\mu$'+'s)')
+        plt.loglog(x_axis, rms_points[0], 'r')
+        plt.loglog(x_axis, rms_points[1], 'bs', markersize=markersize, label='2 modes')#, max: '+str(np.amax(np.round(phase_bins_2_rebin_rms, 4)))+'('+r'$\mu$'+'s)')
+        plt.loglog(x_axis, rms_points[1], 'b--')
         plt.xlabel('Int. time for each stacking profile (s)', fontsize=fontsize)
         ylabel = 'RMS for stacking profiles '+'('+r'$\mu$'+'s)'
         plt.ylabel(ylabel, fontsize=fontsize)
         plt.tick_params(axis='both', which='major', labelsize=fontsize)
         plt.legend(loc='lower left', fontsize=fontsize-4)
-        plt.xlim([0,12])
-        plt.ylim([0.2*min(tt_curve), 2*max(tt_curve)])
+        plt.xlim([0,70])
+        plt.ylim([0.9*min(tt_curve), 1.1*max(tt_curve)])
         title = plot_names[ii]
         plt.title(title, fontsize=fontsize-4)
         plot_name = plot_names[ii]+'.png'
@@ -1088,8 +1251,9 @@ def check_noise(profile):
     noise_profiles = reconstruct_profile(U,s,V)
 
     #rebin
-    profile_stack = 10
-    profile = stack(profile, profile_stack)
+    profile_stack = 8
+    print 'line 1192, profile.shape', profile.shape
+#    profile = stack(profile, profile_stack)
 #    print 'profile.shape', profile.shape
 
     var_L = np.zeros((profile.shape[0]))
@@ -1355,12 +1519,24 @@ def phase_fitting(profiles, V, patterns, NMODES, tint_stack, remainder):
     return npy_lik_file
         
 
-def stack(profile, profile_stack):
-    nprof = len(profile)
-    nprof -= nprof % profile_stack
-    profile = profile[:nprof].reshape(nprof // profile_stack, profile_stack, profile.shape[-1])
-    profile = np.mean(profile, 1)
-    return profile
+def stack(profiles, profile_stack):
+
+    # for profile_stack > 64 (integration time > 8 seconds), we need to omit some profiles.
+    len_1_prof = int(536/tint)
+    n_sessions = int(len(profiles) / len_1_prof)
+    stack_profiles = []
+    for i in range(n_sessions):   
+        profile = profiles[i*len_1_prof:(i+1)*len_1_prof]
+        nprof = len(profile)
+        nprof -= nprof % profile_stack
+        profile = profile[:nprof].reshape(nprof // profile_stack, profile_stack, profile.shape[-1])
+        profile = np.mean(profile, 1)
+        print 'profile.shape', profile.shape
+        stack_profiles.append(profile)
+        print 'len(stack_profiles), len(stack_profiles[0])',len(stack_profiles), len(stack_profiles[0])
+    stack_profiles = np.concatenate((stack_profiles))
+    print 'stack_profiles.shape', stack_profiles.shape
+    return stack_profiles
 
 
 def residuals(parameters, NMODES, profile_fft, V_fft):
