@@ -7,6 +7,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib import cm
+import matplotlib.gridspec as gridspec
 #from baseband import mark4
 #from pulsar.predictor import Polyco
 import astropy.units as u
@@ -77,7 +78,7 @@ sessions = [3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22]
 for i in range(len(epochs)*len(sessions)):
     dict[i] = epochs[i/len(sessions)]+str(sessions[i%len(sessions)])
 
-start, end = 18, 19 # decide the sessions of starting and end(included)
+start, end = 2, 3 # decide the sessions of starting and end(included)
 
 
 def not_main():
@@ -134,13 +135,16 @@ def not_main():
         plot_phase_lik(times, phases_amps_1[:len(times)], tint_stack, 'phase_lik_nodes_1_tint_'+str(tint_stack)+'sec.png')
         plot_phase_lik(times, phases_amps_2[:len(times)], tint_stack, 'phase_lik_nodes_2_tint_30.0sec.png')
 
+#    process_profiles(profile, pattern, NMODES, tint_stack, V_recon=None, fit_profile=False, save_V=False)
 
 def main():
 
+    plot_spec_dedisperse()
+    print 'done spec dedisperse'
 #    plot_ut_bands_correlation()
 #    print 'done cor plots'
 
-    prof_stack = [64]#[512, 256, 128, 64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
+    prof_stack = [1]#[512, 256, 128, 64, 32, 16, 8, 4, 2, 1]#[1, 2, 4, 8, 16, 32, 64]
     NMODES = [1,2]
 
 #    rms_stack = np.zeros((len(prof_stack), len(NMODES), 3))
@@ -197,7 +201,7 @@ def NMODES_stack(prof_stack, NMODES):
 #    print 't00', t00
 #    print 'len and type of profile_raw', profile_raw, len(profile_raw), type(profile_raw)
     profile_raw = np.concatenate((profile_raw))
-#    print 'rank, type(profile_raw)', rank, type(profile_raw)
+    print 'rank, type(profile_raw), shape', rank, type(profile_raw), profile_raw.shape
 
     # check the existence of the new V modes, which were constructed by the shifted profiles with an integration time of 0.125 seconds.
     V_same = ('same_'+ pattern1 + '_move_' + 'band_'+ str(band)
@@ -226,7 +230,7 @@ def NMODES_stack(prof_stack, NMODES):
         chunk_times_8sec = get_chunk_times(t00, tint_8sec)
         chunk_times_raw = get_chunk_times(t00, tint) 
 
-        if True: # fit a n-order polynomial
+        if False: # fit a n-order polynomial
             for n in xrange(9, 12):
                 print 'poly order: ',n
                 plot_raw = pattern+'n'+str(n)+'_poly.png'
@@ -268,8 +272,10 @@ def NMODES_stack(prof_stack, NMODES):
 
         pattern3 = 'band_'+str(band)+'_modes_'+str(NMODES)+'_tint_'+str(tint_stack)
         pattern_refit = pattern1 + '_refit_' + pattern3        
+        pattern_refit480 = pattern1 + '_refit480_' + pattern3
 
-        prof_measures_refit = process_profiles(profile_raw, pattern_refit, NMODES, tint_stack, V_recon=V_same, fit_profile=True, save_V=False)
+        print 'start refit 480'
+        prof_measures_refit = process_profiles(profile_raw, pattern_refit, NMODES, tint_stack, V_recon=V_same, fit_profile=True, save_V=True)
 
         '''Step 7: get the refit TOAs, remove the parabola, and get the std.'''
         phase_bins_refit = prof_measures_refit[:,0]
@@ -425,13 +431,13 @@ def find_outlier_index(phase_bins_raw, phase_bins_raw_errs):
 
 def plot_phase_poly(times, phase_bins_raw, phase_bins_raw_errs, band, n, plot_name):
 
-    # remove outliers:
-    outliers_index = find_outlier_index(phase_bins_raw, phase_bins_raw_errs)
-    outliers_count = len(outliers_index[0])
-    print 'numbers and index of outlier:', outliers_count, outliers_index
-    times = np.delete(times, outliers_index)
-    phase_bins_raw = np.delete(phase_bins_raw, outliers_index)
-    phase_bins_raw_errs = np.delete(phase_bins_raw_errs, outliers_index)
+    if False:    # remove outliers:
+        outliers_index = find_outlier_index(phase_bins_raw, phase_bins_raw_errs)
+        outliers_count = len(outliers_index[0])
+        print 'numbers and index of outlier:', outliers_count, outliers_index
+        times = np.delete(times, outliers_index)
+        phase_bins_raw = np.delete(phase_bins_raw, outliers_index)
+        phase_bins_raw_errs = np.delete(phase_bins_raw_errs, outliers_index)
 
     # fit a parabola for the TOAs distribution
     popt, pcov = curve_fit(poly_n, times, phase_bins_raw, p0=[0]*(n+1))
@@ -611,12 +617,16 @@ def process_profiles(profile, pattern, NMODES, tint_stack, V_recon=None, fit_pro
         profile_norm_var = np.concatenate((profile_norm_var_L, profile_norm_var_R), axis=1)
 
         profile_norm_var = profile_norm_var[:, :]
-        print 'line 510, profile_norm_var.shape', profile_norm_var.shape
+        print 'line 614, profile_norm_var.shape', profile_norm_var.shape
 #        plot_spec_dedisperse(profile_norm_var) # to check the spec
-
-        print 'line 513, finish profile_norm_var'
+        np.save('profiles480_norm_var.npy', profile_norm_var)
+        print 'line 617, finish profile_norm_var'
         # SVD on the normalized variance profile.
         U, s, V = svd(profile_norm_var)
+        np.save('profiles480_U.npy', U)
+        np.save('profiles480_s.npy', s)
+        np.save('profiles480_V.npy', V)
+
         if save_V == True:
             save_V_name = 'same_'+ pattern + '_norm_var_lik_V.npy' 
             np.save(save_V_name, V)
@@ -648,6 +658,9 @@ def fourier(x, tau, *a):
     for deg in range(1, len(a)):
         ret += a[deg] * np.cos((deg+1) * np.pi / tau * x)
     return ret
+
+def gaussian(t,a,t0,sigma):
+    return a*np.exp(-(t-t0)**2/(2*sigma**2))
 
 def sine(x, a, b, c, d):
     return a*np.sin(b*x+c) + d
@@ -788,37 +801,101 @@ def TOA_predictor(ar_data, jj, tt, phase_correction):
 
     return TOA, ph
 
-def plot_spec_dedisperse(spec):
+def plot_spec_dedisperse():
 #    this_file = h5py.File('/mnt/raid-project/gmrt/hhlin/time_streams_1957/gp052a_ar_no0007_512g_0b_56821.2537037+536s_h5','r')
-#    spec = this_file['fold_data_int_0.125_band_0']
+#    spec = this_file['fold_data_int_0.125_band_0'][0:480]
+    nt = 3200
+    spec = np.load('profiles480_norm_var.npy')[0:nt]
     spec_L = spec[:, 0:spec.shape[1]/2]
     spec_R = spec[:, spec.shape[1]/2:]
     spec_mean = np.mean((spec_L,spec_R), axis=0)
     
-    cmap = cm.winter
+    cmap = plt.cm.viridis
+    vmin = np.mean(spec) + 1.5*np.std(spec)
+    vmax = np.mean(spec) + -1*np.std(spec)
     extent = [0, paras.ngate, len(spec)*0.125, 0]
 
     plt.close('all')
-    plt.imshow(spec_L, extent=extent, aspect='auto', cmap = cmap)
+    plt.imshow(spec_L, extent=extent, aspect='auto', cmap = cmap, vmin=vmin, vmax=vmax)
     plt.colorbar()
     plt.xlabel('Phase Bins')
     plt.ylabel('Time (Sec)')
     plt.savefig('spec_L.png', bbox_inches='tight', dpi=300)
 
     plt.close('all')
-    plt.imshow(spec_R, extent=extent, aspect='auto', cmap = cmap)
+    plt.imshow(spec_R, extent=extent, aspect='auto', cmap = cmap, vmin=vmin, vmax=vmax)
     plt.colorbar()
     plt.xlabel('Phase Bins')
     plt.ylabel('Time (Sec)')
     plt.savefig('spec_R.png', bbox_inches='tight', dpi=300)
 
     plt.close('all')
-    plt.imshow(spec_mean, extent=extent, aspect='auto', cmap = cmap)
+    plt.imshow(spec_mean, extent=extent, aspect='auto', cmap = cmap, vmin=vmin, vmax=vmax)
     plt.colorbar()
     plt.xlabel('Phase Bins')
     plt.ylabel('Time (Sec)')
+#    plt.ylim()
     plt.savefig('spec_mean.png', bbox_inches='tight', dpi=300)
 
+    '''Plot the SVD decomposition for the 1st and 2nd mode in images. Raw data are: gp052_a6_to_a7_move_band_0_modes_1_tint_0.125, profiles[0:480]'''
+
+    s = np.load('profiles480_s.npy')
+    u = np.load('profiles480_U.npy')
+    v =np.load('profiles480_V.npy')
+
+
+    v_mean = np.zeros((v.shape[0], v.shape[1]/2))
+    for i in xrange(len(v)):
+        v_mean[i] = (v[i,0:v.shape[1]/2]+v[i, v.shape[1]/2:])/2
+
+    imageall = -np.dot((u[0:nt,:]*s[:]).reshape(nt,1024), v_mean[:].reshape(1024,512))
+    image1 = -np.dot((u[0:nt,0]*s[0]).reshape(nt,1), v_mean[0].reshape(1,512))
+    image2 = -np.dot((u[0:nt,1]*s[1]).reshape(nt,1), v_mean[1].reshape(1,512))
+
+    phase_range = np.arange(0, 512)
+    time_range = np.arange(0,nt*0.125, 0.125)
+
+    plt.close('all')
+#    plt.plot(phase_range, v_mean[0]+0.5, 'g')
+    plt.plot(phase_range, v_mean[0]+0.5, 'g')
+    plt.plot(phase_range, v_mean[1], 'g')
+#    plt.xlim()
+#    plt.ylim([-0.4,0.9])
+    plt.savefig('spec_v01.png', bbox_inches='tight', dpi=300)
+
+    plt.close('all')
+    plt.plot(time_range, -20*u[0:nt, 0]+1, 'b')
+    plt.plot(time_range, -20*u[0:nt, 1]-1, 'b')
+    plt.ylim([-2,2])
+    plt.savefig('spec_u01.png', bbox_inches='tight', dpi=300)
+
+
+    plt.close('all')
+    plt.imshow(imageall, extent=extent, aspect='auto', cmap = cmap, vmin=vmin, vmax=vmax)
+    plt.colorbar()
+    plt.xlabel('Phase Bins')
+    plt.ylabel('Time (Sec)')
+    plt.savefig('spec_imageall.png', bbox_inches='tight', dpi=300)
+
+
+    plt.close('all')
+#    gs1 = gridspec.GridSpec(3, 3)
+#    gs1.update(left=0.05, right=0.48, wspace=0.05)
+#    ax1 = plt.subplot(gs1[0, :-1])
+#    ax2 = plt.subplot(gs1[1:, :-1])
+#    ax3 = plt.subplot(gs1[1:, -1])
+    plt.imshow(image1, extent=extent, aspect='auto', cmap = cmap, vmin=vmin, vmax=vmax)
+    plt.colorbar()
+    plt.xlabel('Phase Bins')
+    plt.ylabel('Time (Sec)')
+    plt.savefig('spec_image1.png', bbox_inches='tight', dpi=300)
+
+    plt.close('all')
+    plt.imshow(image2, extent=extent, aspect='auto', cmap = cmap, vmin=-1, vmax=1)
+    plt.colorbar()
+    plt.xlabel('Phase Bins')
+    plt.ylabel('Time (Sec)')
+    plt.savefig('spec_image2.png', bbox_inches='tight', dpi=300)
 
 
 
@@ -1020,6 +1097,42 @@ def plot_ut_bands_correlation():
         plt.xlabel(xlabel)
         plt.ylabel(ylabel)
         plt.savefig(plot_name, bbox_inches='tight', dpi=300)
+
+    # calculate and plot the correlation bandwidth.
+    x_axis = np.arange(-40,41)*tint
+    corbw01 = np.array([np.correlate(b0[1], np.roll(b1[1],i)) for i in range(-40,41)])
+    corbw02 = np.array([np.correlate(b0[1], np.roll(b2[1],i)) for i in range(-40,41)])
+    corbw12 = np.array([np.correlate(b1[1], np.roll(b2[1],i)) for i in range(-40,41)])
+
+    popt01, pcov01 = curve_fit(gaussian, x_axis, np.array(corbw01[:,0]), p0=[1, 0, 1.5])
+    popt02, pcov02 = curve_fit(gaussian, x_axis, np.array(corbw02[:,0]), p0=[1, 0, 1.5])
+    popt12, pcov12 = curve_fit(gaussian, x_axis, np.array(corbw12[:,0]), p0=[1, 0, 1.5])
+
+    bw01, bw02, bw12 = np.round(popt01[-1],4), np.round(popt02[-1],4), np.round(popt12[-1],4)
+    print 'bw01, bw02, bw12', bw01, bw02, bw12
+
+    label1 = 'decor. bandwith between the 1st and 2nd bands: '+str(bw01)+' sec.'
+    label2 = 'decor. bandwith between the 1st and 3rd bands: '+str(bw02)+' sec.'
+    label3 = 'decor. bandwith between the 2nd and 3rd bands: '+str(bw12)+' sec.'
+
+    markersize = 4.0
+    fontsize = 16
+
+    plt.close('all')
+    plt.plot(x_axis, corbw01, 'ro', markersize=markersize, label=label1)
+    plt.plot(x_axis, corbw01, 'r')
+    plt.plot(x_axis, corbw02, 'bs', markersize=markersize, label=label2)
+    plt.plot(x_axis, corbw02, 'b--')
+    plt.plot(x_axis, corbw12, 'g^', markersize=markersize, label=label3)
+    plt.plot(x_axis, corbw12, 'g-.')
+    plt.xlabel('Time (sec)', fontsize=fontsize)
+    ylabel = 'Correlation of the 2nd U'
+    plt.ylabel(ylabel, fontsize=fontsize)
+    plt.xlim([0, 5.0])
+    plt.tick_params(axis='both', which='major', labelsize=fontsize)
+    plt.legend(loc='upper right', fontsize=fontsize-4)
+    plot_name = 'u_phase_bins_corbw.png'
+    plt.savefig(plot_name, bbox_inches='tight', dpi=300)
 
 def plot_ut_phase_correlation():
     
